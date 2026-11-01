@@ -397,6 +397,7 @@ func (s *Server) handleVacancies(w http.ResponseWriter, r *http.Request) {
 	grade := strings.TrimSpace(q.Get("grade"))
 	source := strings.TrimSpace(q.Get("source"))
 	status := strings.TrimSpace(q.Get("status"))
+	sortOrder := strings.TrimSpace(q.Get("sort"))
 
 	minMatch := 0
 	if m, err := strconv.Atoi(q.Get("min_match")); err == nil {
@@ -418,7 +419,7 @@ func (s *Server) handleVacancies(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * limit
 
-	vacancies, total, err := s.storage.GetVacanciesList(user.UserID, search, grade, source, status, minMatch, limit, offset)
+	vacancies, total, err := s.storage.GetVacanciesList(user.UserID, search, grade, source, status, sortOrder, minMatch, limit, offset)
 	if err != nil {
 		s.jsonError(w, http.StatusInternalServerError, err.Error())
 		return

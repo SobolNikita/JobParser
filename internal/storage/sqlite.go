@@ -66,7 +66,8 @@ func (s *Storage) migrate() error {
 			description TEXT,
 			requirements TEXT,
 			published_at DATETIME,
-			created_at DATETIME
+			created_at DATETIME,
+			expected_grade TEXT DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS user_vacancies (
 			user_id INTEGER,
@@ -99,6 +100,23 @@ func (s *Storage) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN is_polling_enabled INTEGER DEFAULT 0;")
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN pdf_file_id TEXT DEFAULT '';")
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN pdf_file_path TEXT DEFAULT '';")
+	_, _ = s.db.Exec("ALTER TABLE vacancies ADD COLUMN expected_grade TEXT DEFAULT '';")
+
+	// Backfill expected_grade for existing vacancies
+	_, _ = s.db.Exec(`UPDATE vacancies SET expected_grade = 'Junior' 
+		WHERE (expected_grade IS NULL OR expected_grade = '') 
+		AND (LOWER(title) LIKE '%junior%' OR LOWER(title) LIKE '%джун%' OR LOWER(title) LIKE '%стажер%' OR LOWER(title) LIKE '%стажёр%' OR LOWER(title) LIKE '%intern%' OR LOWER(title) LIKE '%trainee%' OR LOWER(title) LIKE '%младший%');`)
+
+	_, _ = s.db.Exec(`UPDATE vacancies SET expected_grade = 'Lead' 
+		WHERE (expected_grade IS NULL OR expected_grade = '') 
+		AND (LOWER(title) LIKE '%lead%' OR LOWER(title) LIKE '%тимлид%' OR LOWER(title) LIKE '%техлид%' OR LOWER(title) LIKE '%руководитель%' OR LOWER(title) LIKE '%architect%' OR LOWER(title) LIKE '%архитектор%');`)
+
+	_, _ = s.db.Exec(`UPDATE vacancies SET expected_grade = 'Senior' 
+		WHERE (expected_grade IS NULL OR expected_grade = '') 
+		AND (LOWER(title) LIKE '%senior%' OR LOWER(title) LIKE '%сеньор%' OR LOWER(title) LIKE '%синиор%' OR LOWER(title) LIKE '%старший%');`)
+
+	_, _ = s.db.Exec(`UPDATE vacancies SET expected_grade = 'Middle' 
+		WHERE (expected_grade IS NULL OR expected_grade = '');`)
 
 	return nil
 }
@@ -383,8 +401,14 @@ func (s *Storage) SaveVacancy(v *models.Vacancy) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	query := `INSERT OR IGNORE INTO vacancies (id, source, external_id, title, company, salary, location, url, description, requirements, published_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
+	if v.ExpectedGrade == "" {
+		v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
+	}
+
+	query := `INSERT INTO vacancies (id, source, external_id, title, company, salary, location, url, description, requirements, published_at, created_at, expected_grade)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			expected_grade = CASE WHEN excluded.expected_grade != '' THEN excluded.expected_grade ELSE vacancies.expected_grade END;`
 
 	_, err := s.db.Exec(query,
 		v.ID,
@@ -399,6 +423,7 @@ func (s *Storage) SaveVacancy(v *models.Vacancy) error {
 		v.Requirements,
 		v.PublishedAt,
 		time.Now(),
+		v.ExpectedGrade,
 	)
 	return err
 }
@@ -478,7 +503,7 @@ func (s *Storage) GetUserVacancy(userID int64, vacID string) (*models.Vacancy, e
 	defer s.mu.RUnlock()
 
 	query := `SELECT v.id, v.source, v.external_id, v.title, v.company, v.salary, v.location, v.url, v.description, v.requirements, v.published_at, v.created_at,
-		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, '')
+		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, ''), COALESCE(v.expected_grade, '')
 		FROM vacancies v
 		LEFT JOIN user_vacancies uv ON v.id = uv.vacancy_id AND uv.user_id = ?
 		WHERE v.id = ?;`
@@ -488,10 +513,13 @@ func (s *Storage) GetUserVacancy(userID int64, vacID string) (*models.Vacancy, e
 	err := s.db.QueryRow(query, userID, vacID).Scan(
 		&v.ID, &v.Source, &v.ExternalID, &v.Title, &v.Company, &v.Salary, &v.Location, &v.URL,
 		&v.Description, &v.Requirements, &v.PublishedAt, &v.CreatedAt,
-		&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter,
+		&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter, &v.ExpectedGrade,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if v.ExpectedGrade == "" {
+		v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
 	}
 	v.Status = models.VacancyStatus(statusStr)
 	return &v, nil
@@ -503,7 +531,7 @@ func (s *Storage) GetFavorites(userID int64) ([]*models.Vacancy, error) {
 	defer s.mu.RUnlock()
 
 	query := `SELECT v.id, v.source, v.external_id, v.title, v.company, v.salary, v.location, v.url, v.description, v.requirements, v.published_at, v.created_at,
-		uv.match_pct, uv.match_analysis, uv.status, uv.cover_letter
+		uv.match_pct, uv.match_analysis, uv.status, uv.cover_letter, COALESCE(v.expected_grade, '')
 		FROM vacancies v
 		JOIN user_vacancies uv ON v.id = uv.vacancy_id
 		WHERE uv.user_id = ? AND uv.status = 'favorite'
@@ -522,10 +550,13 @@ func (s *Storage) GetFavorites(userID int64) ([]*models.Vacancy, error) {
 		err := rows.Scan(
 			&v.ID, &v.Source, &v.ExternalID, &v.Title, &v.Company, &v.Salary, &v.Location, &v.URL,
 			&v.Description, &v.Requirements, &v.PublishedAt, &v.CreatedAt,
-			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter,
+			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter, &v.ExpectedGrade,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if v.ExpectedGrade == "" {
+			v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
 		}
 		v.Status = models.VacancyStatus(statusStr)
 		list = append(list, &v)
@@ -533,8 +564,8 @@ func (s *Storage) GetFavorites(userID int64) ([]*models.Vacancy, error) {
 	return list, nil
 }
 
-// GetVacanciesList returns paginated and filtered vacancies for the web API
-func (s *Storage) GetVacanciesList(userID int64, search, grade, source, status string, minMatch, limit, offset int) ([]*models.Vacancy, int, error) {
+// GetVacanciesList returns paginated, filtered, and sorted vacancies for the web API
+func (s *Storage) GetVacanciesList(userID int64, search, grade, source, status, sortOrder string, minMatch, limit, offset int) ([]*models.Vacancy, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -549,6 +580,22 @@ func (s *Storage) GetVacanciesList(userID int64, search, grade, source, status s
 		whereClauses = append(whereClauses, "(v.title LIKE ? OR v.company LIKE ? OR v.requirements LIKE ?)")
 		pattern := "%" + search + "%"
 		args = append(args, pattern, pattern, pattern)
+	}
+
+	if grade != "" {
+		switch strings.ToLower(grade) {
+		case "junior":
+			whereClauses = append(whereClauses, "(v.expected_grade LIKE '%Junior%' OR (v.expected_grade = '' AND (LOWER(v.title) LIKE '%junior%' OR LOWER(v.title) LIKE '%джун%' OR LOWER(v.title) LIKE '%стажер%' OR LOWER(v.title) LIKE '%intern%')))")
+		case "middle":
+			whereClauses = append(whereClauses, "(v.expected_grade LIKE '%Middle%' OR (v.expected_grade = '' AND (LOWER(v.title) LIKE '%middle%' OR LOWER(v.title) LIKE '%мидл%')))")
+		case "senior":
+			whereClauses = append(whereClauses, "(v.expected_grade LIKE '%Senior%' OR (v.expected_grade = '' AND (LOWER(v.title) LIKE '%senior%' OR LOWER(v.title) LIKE '%сеньор%' OR LOWER(v.title) LIKE '%синиор%')))")
+		case "lead":
+			whereClauses = append(whereClauses, "(v.expected_grade LIKE '%Lead%' OR v.expected_grade LIKE '%Architect%' OR (v.expected_grade = '' AND (LOWER(v.title) LIKE '%lead%' OR LOWER(v.title) LIKE '%тимлид%' OR LOWER(v.title) LIKE '%architect%')))")
+		default:
+			whereClauses = append(whereClauses, "(v.expected_grade = ? OR v.title LIKE ?)")
+			args = append(args, grade, "%"+grade+"%")
+		}
 	}
 
 	if source != "" {
@@ -575,13 +622,49 @@ func (s *Storage) GetVacanciesList(userID int64, search, grade, source, status s
 	var total int
 	_ = s.db.QueryRow(countQuery, args...).Scan(&total)
 
+	var orderClause string
+	switch sortOrder {
+	case "grade_asc":
+		orderClause = `CASE 
+			WHEN v.expected_grade LIKE '%Junior%' AND v.expected_grade NOT LIKE '%Middle%' THEN 1
+			WHEN v.expected_grade LIKE '%Junior%' AND v.expected_grade LIKE '%Middle%' THEN 2
+			WHEN v.expected_grade = 'Middle' THEN 3
+			WHEN v.expected_grade LIKE '%Middle%' AND v.expected_grade LIKE '%Senior%' THEN 4
+			WHEN v.expected_grade = 'Senior' THEN 5
+			WHEN v.expected_grade LIKE '%Lead%' OR v.expected_grade LIKE '%Architect%' THEN 6
+			WHEN LOWER(v.title) LIKE '%junior%' OR LOWER(v.title) LIKE '%джун%' OR LOWER(v.title) LIKE '%стажер%' OR LOWER(v.title) LIKE '%intern%' THEN 1
+			WHEN LOWER(v.title) LIKE '%senior%' OR LOWER(v.title) LIKE '%сеньор%' OR LOWER(v.title) LIKE '%синиор%' THEN 5
+			WHEN LOWER(v.title) LIKE '%lead%' OR LOWER(v.title) LIKE '%тимлид%' OR LOWER(v.title) LIKE '%architect%' THEN 6
+			ELSE 3
+		END ASC, COALESCE(uv.match_pct, 0) DESC, v.created_at DESC`
+	case "grade_desc":
+		orderClause = `CASE 
+			WHEN v.expected_grade LIKE '%Lead%' OR v.expected_grade LIKE '%Architect%' THEN 1
+			WHEN v.expected_grade = 'Senior' THEN 2
+			WHEN v.expected_grade LIKE '%Middle%' AND v.expected_grade LIKE '%Senior%' THEN 3
+			WHEN v.expected_grade = 'Middle' THEN 4
+			WHEN v.expected_grade LIKE '%Junior%' AND v.expected_grade LIKE '%Middle%' THEN 5
+			WHEN v.expected_grade LIKE '%Junior%' AND v.expected_grade NOT LIKE '%Middle%' THEN 6
+			WHEN LOWER(v.title) LIKE '%lead%' OR LOWER(v.title) LIKE '%тимлид%' OR LOWER(v.title) LIKE '%architect%' THEN 1
+			WHEN LOWER(v.title) LIKE '%senior%' OR LOWER(v.title) LIKE '%сеньор%' OR LOWER(v.title) LIKE '%синиор%' THEN 2
+			WHEN LOWER(v.title) LIKE '%junior%' OR LOWER(v.title) LIKE '%джун%' OR LOWER(v.title) LIKE '%стажер%' OR LOWER(v.title) LIKE '%intern%' THEN 6
+			ELSE 4
+		END ASC, COALESCE(uv.match_pct, 0) DESC, v.created_at DESC`
+	case "date_desc":
+		orderClause = `v.created_at DESC, COALESCE(uv.match_pct, 0) DESC`
+	case "match_desc":
+		fallthrough
+	default:
+		orderClause = `COALESCE(uv.match_pct, 0) DESC, v.created_at DESC`
+	}
+
 	query := fmt.Sprintf(`SELECT v.id, v.source, v.external_id, v.title, v.company, v.salary, v.location, v.url, v.description, v.requirements, v.published_at, v.created_at,
-		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, '')
+		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, ''), COALESCE(v.expected_grade, '')
 		FROM vacancies v
 		LEFT JOIN user_vacancies uv ON v.id = uv.vacancy_id AND uv.user_id = ?
 		WHERE %s
-		ORDER BY COALESCE(uv.match_pct, 0) DESC, v.created_at DESC
-		LIMIT ? OFFSET ?;`, whereSQL)
+		ORDER BY %s
+		LIMIT ? OFFSET ?;`, whereSQL, orderClause)
 
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -597,10 +680,13 @@ func (s *Storage) GetVacanciesList(userID int64, search, grade, source, status s
 		err := rows.Scan(
 			&v.ID, &v.Source, &v.ExternalID, &v.Title, &v.Company, &v.Salary, &v.Location, &v.URL,
 			&v.Description, &v.Requirements, &v.PublishedAt, &v.CreatedAt,
-			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter,
+			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter, &v.ExpectedGrade,
 		)
 		if err != nil {
 			return nil, 0, err
+		}
+		if v.ExpectedGrade == "" {
+			v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
 		}
 		v.Status = models.VacancyStatus(statusStr)
 		list = append(list, &v)
@@ -619,7 +705,7 @@ func (s *Storage) GetUnviewedVacancies(userID int64, limit int) ([]*models.Vacan
 	}
 
 	query := `SELECT v.id, v.source, v.external_id, v.title, v.company, v.salary, v.location, v.url, v.description, v.requirements, v.published_at, v.created_at,
-		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, '')
+		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, ''), COALESCE(v.expected_grade, '')
 		FROM vacancies v
 		LEFT JOIN user_vacancies uv ON v.id = uv.vacancy_id AND uv.user_id = ?
 		WHERE uv.status IS NULL OR uv.status = 'new'
@@ -639,10 +725,13 @@ func (s *Storage) GetUnviewedVacancies(userID int64, limit int) ([]*models.Vacan
 		err := rows.Scan(
 			&v.ID, &v.Source, &v.ExternalID, &v.Title, &v.Company, &v.Salary, &v.Location, &v.URL,
 			&v.Description, &v.Requirements, &v.PublishedAt, &v.CreatedAt,
-			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter,
+			&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter, &v.ExpectedGrade,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if v.ExpectedGrade == "" {
+			v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
 		}
 		v.Status = models.VacancyStatus(statusStr)
 		list = append(list, &v)
