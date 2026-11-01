@@ -1,0 +1,15 @@
+[Unit]
+Description=Golang Job Hunter Bot & Auto-Apply AI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/jobparser
+ExecStart=/opt/jobparser/jobparser-linux -config /opt/jobparser/config.json
+Restart=always
+RestartSec=10
+Environment=HEADLESS_BROWSER=true
+
+[Install]
+WantedBy=multi-user.target

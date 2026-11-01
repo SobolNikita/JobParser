@@ -1,0 +1,22 @@
+# Binaries
+*.exe
+jobparser
+jobparser-linux
+*.tar.gz
+
+# Secrets and local configurations
+config.json
+*.key
+*.pem
+
+# Database and runtime data
+*.db
+*.db-*
+*.sqlite
+data/
+chrome_profile/
+
+# Logs and temp files
+*.log
+tmp/
+.temp/

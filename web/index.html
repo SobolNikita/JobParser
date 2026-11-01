@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JobHunter // Autonomous AI Career Hunter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Minimalist Vercel-Style Navbar -->
+    <header class="navbar">
+      <div class="nav-container">
+        <div class="nav-brand">
+          <svg class="brand-logo" width="22" height="22" viewBox="0 0 76 65" fill="currentColor">
+            <path d="M37.5274 0L75.0548 65H0L37.5274 0Z" />
+          </svg>
+          <span class="brand-title">JOBHUNTER</span>
+          <span class="brand-badge">AI 2.0</span>
+          <div class="server-status" id="serverStatusBadge" title="Статус сервера бэкенда">
+            <span class="status-dot"></span>
+            <span class="status-text" id="serverStatusText">157.151.254.33</span>
+          </div>
+        </div>
+
+        <div class="nav-controls">
+          <!-- Active Stack & Grade Indicators -->
+          <div class="user-meta" id="navUserMeta" style="display: none;">
+            <div class="chip chip-stack" id="navStackBadge" title="Текущий стек поиска">
+              <span class="chip-icon">🎯</span>
+              <span id="navStackText">Golang</span>
+            </div>
+            <div class="chip chip-grade" id="navGradeBadge" title="Ваш грейд">
+              <span id="navGradeText">Junior</span>
+            </div>
+          </div>
+
+          <!-- Sweep/Refresh Button -->
+          <button class="btn btn-secondary btn-sm" id="btnRefreshJobs" title="Собрать свежие вакансии со всех площадок">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+            <span class="btn-text">Обновить</span>
+          </button>
+
+          <!-- Theme Toggle -->
+          <button class="btn btn-ghost btn-icon" id="themeToggle" title="Сменить тему">
+            <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+
+          <!-- Auth Button -->
+          <button class="btn btn-secondary btn-sm" id="btnAuthModal">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span id="authBtnLabel">Вход</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Sub-Nav Tabs Bar -->
+    <div class="tabs-bar">
+      <div class="tabs-container">
+        <button class="tab-item active" data-tab="vacancies">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <span>Вакансии</span>
+          <span class="tab-badge" id="tabVacanciesCount">0</span>
+        </button>
+
+        <button class="tab-item" data-tab="favorites">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+          <span>Избранное</span>
+          <span class="tab-badge" id="tabFavoritesCount">0</span>
+        </button>
+
+        <button class="tab-item" data-tab="profile">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          <span>Профиль и Стек</span>
+        </button>
+
+        <button class="tab-item" data-tab="settings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Сервер API</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- 1. TAB: VACANCIES -->
+      <section id="tab-vacancies" class="tab-pane active">
+        <!-- Filter Toolbar -->
+        <div class="filter-card">
+          <div class="search-row">
+            <div class="search-input-wrapper">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="searchInput" class="search-input" placeholder="Поиск по названию, компании или навыкам (Enter для поиска)..." autocomplete="off">
+              <button id="btnClearSearch" class="btn-clear-search" style="display: none;">✕</button>
+            </div>
+            <button id="btnSearchSubmit" class="btn btn-primary">Найти</button>
+          </div>
+
+          <div class="filter-row">
+            <!-- Grade Pill Filters -->
+            <div class="filter-group">
+              <label class="filter-label">Грейд:</label>
+              <div class="pill-group" id="gradePills">
+                <button class="pill active" data-grade="">Все</button>
+                <button class="pill" data-grade="Junior">🟢 Junior</button>
+                <button class="pill" data-grade="Middle">🟡 Middle</button>
+                <button class="pill" data-grade="Senior">🔴 Senior</button>
+                <button class="pill" data-grade="Lead">🟣 Lead</button>
+              </div>
+            </div>
+
+            <!-- Source Filter -->
+            <div class="filter-group">
+              <label class="filter-label">Площадка:</label>
+              <select id="sourceSelect" class="select-control">
+                <option value="">Все источники</option>
+                <option value="hh.ru">HeadHunter (hh.ru)</option>
+                <option value="career.habr.com">Хабр Карьера</option>
+                <option value="HireHi.ru">HireHi</option>
+                <option value="rabota.by">rabota.by</option>
+                <option value="Telegram Channels">Telegram-каналы</option>
+              </select>
+            </div>
+
+            <!-- Min Match Filter -->
+            <div class="filter-group">
+              <label class="filter-label">Мин. Match:</label>
+              <select id="minMatchSelect" class="select-control">
+                <option value="0">Любой match</option>
+                <option value="50">50% и выше</option>
+                <option value="70">70% и выше</option>
+                <option value="85">85% и выше 🔥</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vacancies List Header -->
+        <div class="list-meta">
+          <span id="vacanciesStatsText" class="meta-stats">Загрузка вакансий...</span>
+          <div class="pagination-inline" id="paginationTop"></div>
+        </div>
+
+        <!-- Vacancies Container -->
+        <div id="vacanciesGrid" class="cards-grid">
+          <!-- Populated by JavaScript -->
+        </div>
+
+        <!-- Loading State -->
+        <div id="vacanciesLoading" class="loading-state" style="display: none;">
+          <div class="spinner"></div>
+          <p>Поиск и ранжирование вакансий через ИИ...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="vacanciesEmpty" class="empty-state" style="display: none;">
+          <div class="empty-icon">🔍</div>
+          <h3>Вакансий не найдено</h3>
+          <p>Попробуйте сбросить фильтры или нажмите <b>«Обновить»</b> в шапке для запуска сбора с площадок.</p>
+        </div>
+
+        <!-- Pagination Bottom -->
+        <div class="pagination-footer" id="paginationBottom" style="display: none;">
+          <button class="btn btn-secondary btn-sm" id="btnPrevPage">← Назад</button>
+          <span class="page-indicator" id="pageIndicator">Страница 1</span>
+          <button class="btn btn-secondary btn-sm" id="btnNextPage">Вперед →</button>
+        </div>
+      </section>
+
+      <!-- 2. TAB: FAVORITES -->
+      <section id="tab-favorites" class="tab-pane">
+        <div class="section-header">
+          <h2>⭐ Избранные вакансии</h2>
+          <p class="section-desc">Сохраненные предложения. Вы можете в 1 клик сгенерировать сопроводительное письмо и подготовить отклик.</p>
+        </div>
+
+        <div id="favoritesGrid" class="cards-grid">
+          <!-- Populated by JavaScript -->
+        </div>
+
+        <div id="favoritesEmpty" class="empty-state" style="display: none;">
+          <div class="empty-icon">⭐</div>
+          <h3>В избранном пока пусто</h3>
+          <p>Нажимайте кнопку со звездочкой на карточках вакансий, чтобы сохранить их сюда.</p>
+        </div>
+      </section>
+
+      <!-- 3. TAB: PROFILE & STACK -->
+      <section id="tab-profile" class="tab-pane">
+        <div class="section-header">
+          <h2>🎯 Настройки поиска и Профиль</h2>
+          <p class="section-desc">Настройте свой целевой стек технологий и грейд. Поиск на HeadHunter, Хабре и в Telegram будет подстраиваться под ваш выбор.</p>
+        </div>
+
+        <div class="profile-grid">
+          <!-- Target Stack Card -->
+          <div class="settings-card">
+            <div class="card-header">
+              <span class="card-icon">🎯</span>
+              <div>
+                <h3>Целевой стек / Направление</h3>
+                <p>Выберите технологию для автоматического поиска и парсинга</p>
+              </div>
+            </div>
+
+            <div class="stack-selector" id="stackOptions">
+              <button class="btn-stack" data-stack="Golang">🐹 Golang</button>
+              <button class="btn-stack" data-stack="Python">🐍 Python</button>
+              <button class="btn-stack" data-stack="Frontend">⚛️ Frontend</button>
+              <button class="btn-stack" data-stack="Java">☕ Java</button>
+              <button class="btn-stack" data-stack="DevOps">⚙️ DevOps</button>
+              <button class="btn-stack" data-stack="Rust">🦀 Rust</button>
+            </div>
+
+            <div class="custom-stack-form">
+              <label class="form-label">Или укажите свой стек вручную:</label>
+              <div class="input-inline">
+                <input type="text" id="customStackInput" class="form-input" placeholder="например: Flutter Dart, C++ Unreal, QA Automation">
+                <button id="btnSaveCustomStack" class="btn btn-primary">Сохранить</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Seniority Grade Card -->
+          <div class="settings-card">
+            <div class="card-header">
+              <span class="card-icon">⚡</span>
+              <div>
+                <h3>Ваш грейд (Уровень)</h3>
+                <p>Используется для умного скоринга и отсева завышенных требований</p>
+              </div>
+            </div>
+
+            <div class="grade-selector" id="gradeOptions">
+              <button class="btn-grade" data-grade="Junior">
+                <span class="grade-badge-dot dot-junior"></span>
+                <span class="grade-title">Junior</span>
+                <span class="grade-desc">0-1.5 года опыта</span>
+              </button>
+              <button class="btn-grade" data-grade="Middle">
+                <span class="grade-badge-dot dot-middle"></span>
+                <span class="grade-title">Middle</span>
+                <span class="grade-desc">2-4 года опыта</span>
+              </button>
+              <button class="btn-grade" data-grade="Senior">
+                <span class="grade-badge-dot dot-senior"></span>
+                <span class="grade-title">Senior</span>
+                <span class="grade-desc">5+ лет опыта</span>
+              </button>
+              <button class="btn-grade" data-grade="Lead">
+                <span class="grade-badge-dot dot-lead"></span>
+                <span class="grade-title">Lead / Teamlead</span>
+                <span class="grade-desc">Управление командой</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Continuous Background Search Card -->
+          <div class="settings-card full-width">
+            <div class="card-header">
+              <span class="card-icon">🔄</span>
+              <div>
+                <h3>Постоянный фоновый поиск вакансий</h3>
+                <p>Автоматический мониторинг площадок каждые 15 минут с уведомлениями в Telegram</p>
+              </div>
+            </div>
+
+            <div class="polling-toggle-box">
+              <div class="polling-info">
+                <span class="polling-status-label" id="pollingStatusLabel">Текущий статус: <b>Выключен</b></span>
+                <span class="form-help">Сервер будет периодически сканировать HH, Хабр, HireHi и Telegram под ваш стек.</span>
+              </div>
+              <button id="btnTogglePolling" class="btn btn-secondary">
+                ▶️ Включить постоянный поиск
+              </button>
+            </div>
+          </div>
+
+          <!-- Parsed Skills & Resume Summary Card -->
+          <div class="settings-card full-width">
+            <div class="card-header">
+              <span class="card-icon">📄</span>
+              <div>
+                <h3>Резюме и Распознанные навыки</h3>
+                <p>Данные, проанализированные Gemini ИИ на основе вашего файла</p>
+              </div>
+            </div>
+
+            <div id="skillsCloud" class="skills-cloud">
+              <span class="empty-hint">Навыки загружаются...</span>
+            </div>
+
+            <div class="summary-box">
+              <label class="form-label">Сводка профиля (AI Summary):</label>
+              <div id="resumeSummaryText" class="summary-content">
+                Резюме загружается из Telegram бота...
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. TAB: SETTINGS & SERVER CONFIG -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="section-header">
+          <h2>⚙️ Настройки подключения к бэкенду</h2>
+          <p class="section-desc">Веб-интерфейс работает полностью автономно (на GitHub Pages или локально) и подключается к вашему серверу через REST API.</p>
+        </div>
+
+        <div class="settings-card max-width-card">
+          <div class="form-group">
+            <label class="form-label" for="serverUrlInput">Адрес REST API сервера:</label>
+            <input type="text" id="serverUrlInput" class="form-input" placeholder="http://157.151.254.33:8080">
+            <span class="form-help">IP-адрес или домен вашего удаленного сервера с портом 8080.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="tokenInput">Ваш токен авторизации:</label>
+            <div class="input-inline">
+              <input type="text" id="tokenInput" class="form-input font-mono" placeholder="48-значный токен из Telegram бота">
+              <button id="btnSaveConfig" class="btn btn-primary">Сохранить</button>
+            </div>
+            <span class="form-help">Получите токен в Telegram боте: отправьте команду <code>/web</code> или нажмите кнопку <b>«🌐 Веб-интерфейс»</b>.</span>
+          </div>
+
+          <div class="form-group">
+            <button id="btnTestConnection" class="btn btn-secondary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+              Проверить связь с сервером
+            </button>
+            <span id="testConnectionResult" class="connection-result"></span>
+          </div>
+
+          <hr class="divider">
+
+          <div class="info-callout">
+            <h4>💡 Как опубликовать на GitHub Pages:</h4>
+            <ol>
+              <li>Загрузите файлы из папки <code>web/</code> в ваш репозиторий на GitHub.</li>
+              <li>Перейдите в <b>Settings &gt; Pages</b> и выберите ветку <code>main</code> (или <code>gh-pages</code>).</li>
+              <li>Откройте ссылку вида <code>https://ваше-имя.github.io/JobParser?token=ВАШ_ТОКЕН</code>.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modal: Cover Letter Viewer / Generator -->
+    <div id="modalCoverLetter" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-badge">Gemini AI</span>
+            <h3 id="clModalJobTitle">Сопроводительное письмо</h3>
+            <span id="clModalCompany" class="modal-sub"></span>
+          </div>
+          <button class="modal-close" id="btnCloseClModal">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div id="clLoading" class="loading-state" style="display: none;">
+            <div class="spinner"></div>
+            <p>Генерация индивидуального сопроводительного письма под вакансию...</p>
+          </div>
+
+          <div id="clContentWrapper">
+            <div class="copy-notice">
+              <span>Письмо готово к копированию. Никаких шаблонных приписок и фраз «сгенерировано ИИ».</span>
+            </div>
+            <textarea id="clTextArea" class="cl-textarea" rows="12" spellcheck="false"></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btnRegenCL" class="btn btn-secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+            Перегенерировать
+          </button>
+          <div class="footer-actions-right">
+            <button id="btnCopyCL" class="btn btn-primary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Скопировать в буфер
+            </button>
+            <button id="btnApplyWithCL" class="btn btn-accent">
+              🚀 Откликнуться
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Telegram Auth / Login -->
+    <div id="modalAuth" class="modal-backdrop" style="display: none;">
+      <div class="modal-card modal-sm">
+        <div class="modal-header">
+          <h3>Вход через Telegram</h3>
+          <button class="modal-close" id="btnCloseAuthModal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="auth-modal-intro">
+            Введите ваш персональный токен, который выдает Telegram бот по команде <code>/web</code>.
+          </p>
+
+          <div class="form-group">
+            <label class="form-label" for="loginTokenInput">Токен сессии:</label>
+            <input type="text" id="loginTokenInput" class="form-input font-mono" placeholder="например: 48f9a2b7c6...">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="loginServerInput">Сервер бэкенда:</label>
+            <input type="text" id="loginServerInput" class="form-input" value="http://157.151.254.33:8080">
+          </div>
+
+          <div id="loginError" class="error-banner" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnCancelLogin" class="btn btn-secondary">Отмена</button>
+          <button id="btnSubmitLogin" class="btn btn-primary">Войти</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

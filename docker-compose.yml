@@ -1,0 +1,9 @@
+services:
+  jobparser:
+    build: .
+    restart: always
+    volumes:
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+    environment:
+      - HEADLESS_BROWSER=true
