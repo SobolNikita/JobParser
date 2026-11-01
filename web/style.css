@@ -1238,3 +1238,236 @@ html.light .icon-moon { display: block; }
 
 .toast-success { border-color: #22c55e; }
 .toast-error   { border-color: var(--danger); }
+
+/* ==========================================================================
+   Mobile & Responsive Enhancements (Touch-friendly & Adaptive)
+   ========================================================================== */
+@media (max-width: 768px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .nav-container {
+    padding: 0 12px;
+    height: 52px;
+  }
+
+  .brand-title {
+    font-size: 13px;
+  }
+
+  .brand-badge {
+    display: none;
+  }
+
+  #serverStatusText {
+    display: none; /* Show dot only on mobile */
+  }
+
+  .server-status {
+    padding: 3px 6px;
+    margin-left: 2px;
+  }
+
+  .user-meta {
+    display: none !important;
+  }
+
+  #btnRefreshJobs .btn-text {
+    display: none;
+  }
+
+  #btnRefreshJobs {
+    padding: 6px 8px;
+    min-width: 36px;
+  }
+
+  #authBtnLabel {
+    display: none;
+  }
+
+  #btnAuthModal {
+    padding: 6px 8px;
+    min-width: 36px;
+  }
+
+  /* Tabs Bar Horizontal Touch Scrolling */
+  .tabs-container {
+    padding: 0 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 4px;
+  }
+
+  .tabs-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-item {
+    padding: 10px 14px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Main View & Layout */
+  .main-content {
+    padding: 14px 12px 60px;
+  }
+
+  .view-header {
+    margin-bottom: 12px;
+  }
+
+  .view-title {
+    font-size: 18px;
+  }
+
+  .view-subtitle {
+    font-size: 12px;
+  }
+
+  /* Filters & Search */
+  .filters-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .search-box {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .search-input {
+    height: 44px;
+    font-size: 16px; /* iOS zoom prevention */
+  }
+
+  .filter-select, .sort-select {
+    width: 100%;
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .form-input {
+    font-size: 16px; /* iOS zoom prevention */
+    height: 44px;
+  }
+
+  /* Vacancy Cards */
+  .vacancy-card {
+    padding: 14px;
+    border-radius: var(--radius-md);
+    gap: 12px;
+  }
+
+  .vacancy-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .vacancy-title {
+    font-size: 15px;
+    line-height: 1.35;
+  }
+
+  .vacancy-salary {
+    font-size: 14px;
+  }
+
+  .vacancy-meta-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .vacancy-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .vacancy-actions .btn {
+    width: 100%;
+    justify-content: center;
+    height: 42px;
+    font-size: 13px;
+  }
+
+  /* Modals (Bottom-Sheet style on mobile) */
+  .modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .modal-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 90vh;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+  }
+
+  .modal-header {
+    padding: 12px 16px;
+  }
+
+  .modal-body {
+    padding: 14px 16px;
+    max-height: calc(90vh - 140px);
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    padding: 12px 16px;
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+    justify-content: center;
+    height: 44px;
+  }
+
+  .footer-actions-right {
+    width: 100%;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .cl-textarea {
+    font-size: 15px;
+    min-height: 180px;
+    line-height: 1.5;
+  }
+
+  /* Profile & Settings Cards */
+  .settings-card {
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .stack-selector {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .poll-status-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .poll-status-bar .btn {
+    width: 100%;
+    height: 44px;
+    justify-content: center;
+  }
+}
+

@@ -2,7 +2,8 @@
 <html lang="ru" class="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
   <title>JobHunter // Autonomous AI Career Hunter</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -323,6 +324,25 @@
                 <h3>Резюме и Распознанные навыки</h3>
                 <p>Данные, проанализированные Gemini ИИ на основе вашего файла</p>
               </div>
+            </div>
+
+            <!-- Stored Resume File Box -->
+            <div id="resumeFileStatusBar" class="resume-file-box" style="display: none; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">📄</span>
+                <div>
+                  <div id="resumeFileName" style="font-size: 13px; font-weight: 600; color: var(--text-primary);">resume.pdf</div>
+                  <div id="resumeFileMeta" style="font-size: 11px; color: var(--text-secondary);">Оригинал в формате PDF прикрепляется к откликам</div>
+                </div>
+              </div>
+              <a id="btnDownloadPDF" class="btn btn-secondary btn-sm" target="_blank" href="#" style="text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Скачать PDF
+              </a>
             </div>
 
             <div id="skillsCloud" class="skills-cloud">

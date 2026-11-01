@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,7 @@ func NewServer(
 
 	// Protected endpoints (Token Auth)
 	mux.HandleFunc("/api/me", s.authMiddleware(s.handleMe))
+	mux.HandleFunc("/api/me/resume/pdf", s.authMiddleware(s.handleDownloadPDF))
 	mux.HandleFunc("/api/me/stack", s.authMiddleware(s.handleUpdateStack))
 	mux.HandleFunc("/api/me/grade", s.authMiddleware(s.handleUpdateGrade))
 	mux.HandleFunc("/api/me/polling", s.authMiddleware(s.handleUpdatePolling))
@@ -253,6 +255,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		user = freshUser
 	}
 
+	hasPDF := user.PDFFilePath != "" || user.PDFFileID != ""
+	if !hasPDF && user.FileName != "" && strings.HasSuffix(strings.ToLower(user.FileName), ".pdf") {
+		hasPDF = true
+	}
+
 	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"user_id":            user.UserID,
 		"seniority":          user.Seniority,
@@ -261,9 +268,44 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"skills":             user.Skills,
 		"summary":            user.Summary,
 		"has_resume":         len(user.RawText) > 0,
+		"has_pdf":            hasPDF,
+		"file_name":          user.FileName,
+		"pdf_file_path":      user.PDFFilePath,
 		"is_polling_enabled": s.storage.IsUserPolling(user.UserID),
 		"updated_at":         user.UpdatedAt,
 	})
+}
+
+func (s *Server) handleDownloadPDF(w http.ResponseWriter, r *http.Request) {
+	user := getUserFromContext(r.Context())
+	if user == nil {
+		s.jsonError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	freshUser, err := s.storage.GetResume(user.UserID)
+	if err == nil && freshUser != nil {
+		user = freshUser
+	}
+
+	pdfPath := user.PDFFilePath
+	if pdfPath == "" {
+		pdfPath = fmt.Sprintf("./data/resumes/user_%d.pdf", user.UserID)
+	}
+
+	if _, err := os.Stat(pdfPath); os.IsNotExist(err) {
+		s.jsonError(w, http.StatusNotFound, "Файл резюме в формате PDF еще не загружен на сервер.")
+		return
+	}
+
+	fileName := user.FileName
+	if fileName == "" || !strings.HasSuffix(strings.ToLower(fileName), ".pdf") {
+		fileName = "Resume.pdf"
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	http.ServeFile(w, r, pdfPath)
 }
 
 func (s *Server) handleUpdatePolling(w http.ResponseWriter, r *http.Request) {
@@ -558,7 +600,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	if vac.Source == "hh.ru" || vac.Source == "rabota.by" {
 		applyCtx, applyCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer applyCancel()
-		applyRes, err := s.chrome.ApplyToVacancy(applyCtx, vac, letter)
+		applyRes, err := s.chrome.ApplyToVacancy(applyCtx, vac, letter, user.PDFFilePath)
 		if err != nil {
 			log.Printf("[API Apply] Chrome apply warning: %v", err)
 			_ = s.storage.UpdateUserVacancyStatus(user.UserID, vac.ID, models.StatusApplied)

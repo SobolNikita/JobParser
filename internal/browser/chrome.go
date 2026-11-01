@@ -191,8 +191,13 @@ type ApplyResult struct {
 }
 
 // ApplyToVacancy executes browser automation to apply with cover letter
-func (m *ChromeManager) ApplyToVacancy(ctx context.Context, v *models.Vacancy, coverLetter string) (*ApplyResult, error) {
+func (m *ChromeManager) ApplyToVacancy(ctx context.Context, v *models.Vacancy, coverLetter string, resumePDFPath ...string) (*ApplyResult, error) {
 	var result ApplyResult
+
+	pdfPath := ""
+	if len(resumePDFPath) > 0 {
+		pdfPath = resumePDFPath[0]
+	}
 
 	err := m.WithPage(ctx, func(page *rod.Page) error {
 		log.Printf("[Apply] Navigating to vacancy URL: %s", v.URL)
@@ -202,6 +207,17 @@ func (m *ChromeManager) ApplyToVacancy(ctx context.Context, v *models.Vacancy, c
 
 		_ = page.WaitLoad()
 		time.Sleep(2 * time.Second)
+
+		// Upload PDF resume if file input is available on the application page
+		if pdfPath != "" {
+			if _, statErr := os.Stat(pdfPath); statErr == nil {
+				if fileInputs, err := page.Elements("input[type='file']"); err == nil && len(fileInputs) > 0 {
+					log.Printf("[Apply] Attaching PDF resume file: %s", pdfPath)
+					_ = fileInputs[0].SetFiles([]string{pdfPath})
+					time.Sleep(1 * time.Second)
+				}
+			}
+		}
 
 		switch {
 		case strings.Contains(v.URL, "hh.ru") || strings.Contains(v.URL, "rabota.by"):

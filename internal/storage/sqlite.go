@@ -97,6 +97,8 @@ func (s *Storage) migrate() error {
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN auth_token TEXT DEFAULT '';")
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN is_authorized INTEGER DEFAULT 1;")
 	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN is_polling_enabled INTEGER DEFAULT 0;")
+	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN pdf_file_id TEXT DEFAULT '';")
+	_, _ = s.db.Exec("ALTER TABLE users ADD COLUMN pdf_file_path TEXT DEFAULT '';")
 
 	return nil
 }
@@ -115,8 +117,8 @@ func (s *Storage) SaveResume(resume *models.Resume) error {
 	}
 
 	skillsJSON, _ := json.Marshal(resume.Skills)
-	query := `INSERT INTO users (user_id, resume_text, resume_filename, summary, skills_json, seniority, desired_role, target_stack, auth_token, is_authorized, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	query := `INSERT INTO users (user_id, resume_text, resume_filename, summary, skills_json, seniority, desired_role, target_stack, pdf_file_id, pdf_file_path, auth_token, is_authorized, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			resume_text = excluded.resume_text,
 			resume_filename = excluded.resume_filename,
@@ -125,6 +127,8 @@ func (s *Storage) SaveResume(resume *models.Resume) error {
 			seniority = excluded.seniority,
 			desired_role = excluded.desired_role,
 			target_stack = CASE WHEN excluded.target_stack != '' THEN excluded.target_stack ELSE users.target_stack END,
+			pdf_file_id = CASE WHEN excluded.pdf_file_id != '' THEN excluded.pdf_file_id ELSE users.pdf_file_id END,
+			pdf_file_path = CASE WHEN excluded.pdf_file_path != '' THEN excluded.pdf_file_path ELSE users.pdf_file_path END,
 			auth_token = CASE WHEN excluded.auth_token != '' THEN excluded.auth_token ELSE users.auth_token END,
 			is_authorized = excluded.is_authorized,
 			updated_at = excluded.updated_at;`
@@ -138,6 +142,8 @@ func (s *Storage) SaveResume(resume *models.Resume) error {
 		resume.Seniority,
 		resume.DesiredRole,
 		resume.TargetStack,
+		resume.PDFFileID,
+		resume.PDFFilePath,
 		resume.AuthToken,
 		authInt,
 		time.Now(),
@@ -150,7 +156,7 @@ func (s *Storage) GetResume(userID int64) (*models.Resume, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT user_id, COALESCE(resume_text, ''), COALESCE(resume_filename, ''), COALESCE(summary, ''), COALESCE(skills_json, '[]'), COALESCE(seniority, 'Junior'), COALESCE(desired_role, ''), COALESCE(target_stack, 'Golang'), COALESCE(auth_token, ''), COALESCE(is_authorized, 1), COALESCE(is_polling_enabled, 0), updated_at
+	query := `SELECT user_id, COALESCE(resume_text, ''), COALESCE(resume_filename, ''), COALESCE(summary, ''), COALESCE(skills_json, '[]'), COALESCE(seniority, 'Junior'), COALESCE(desired_role, ''), COALESCE(target_stack, 'Golang'), COALESCE(pdf_file_id, ''), COALESCE(pdf_file_path, ''), COALESCE(auth_token, ''), COALESCE(is_authorized, 1), COALESCE(is_polling_enabled, 0), updated_at
 		FROM users WHERE user_id = ?;`
 
 	var r models.Resume
@@ -168,6 +174,8 @@ func (s *Storage) GetResume(userID int64) (*models.Resume, error) {
 		&r.Seniority,
 		&r.DesiredRole,
 		&r.TargetStack,
+		&r.PDFFileID,
+		&r.PDFFilePath,
 		&r.AuthToken,
 		&authInt,
 		&pollInt,
@@ -217,7 +225,7 @@ func (s *Storage) GetUserByToken(token string) (*models.Resume, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	query := `SELECT user_id, COALESCE(resume_text, ''), COALESCE(resume_filename, ''), COALESCE(summary, ''), COALESCE(skills_json, '[]'), COALESCE(seniority, 'Junior'), COALESCE(desired_role, ''), COALESCE(target_stack, 'Golang'), COALESCE(auth_token, ''), COALESCE(is_authorized, 1), COALESCE(is_polling_enabled, 0), updated_at
+	query := `SELECT user_id, COALESCE(resume_text, ''), COALESCE(resume_filename, ''), COALESCE(summary, ''), COALESCE(skills_json, '[]'), COALESCE(seniority, 'Junior'), COALESCE(desired_role, ''), COALESCE(target_stack, 'Golang'), COALESCE(pdf_file_id, ''), COALESCE(pdf_file_path, ''), COALESCE(auth_token, ''), COALESCE(is_authorized, 1), COALESCE(is_polling_enabled, 0), updated_at
 		FROM users WHERE auth_token = ?;`
 
 	var r models.Resume
@@ -235,6 +243,8 @@ func (s *Storage) GetUserByToken(token string) (*models.Resume, error) {
 		&r.Seniority,
 		&r.DesiredRole,
 		&r.TargetStack,
+		&r.PDFFileID,
+		&r.PDFFilePath,
 		&r.AuthToken,
 		&authInt,
 		&pollInt,

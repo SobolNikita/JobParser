@@ -74,6 +74,9 @@
     gradeOptions: document.getElementById('gradeOptions'),
     skillsCloud: document.getElementById('skillsCloud'),
     resumeSummaryText: document.getElementById('resumeSummaryText'),
+    resumeFileStatusBar: document.getElementById('resumeFileStatusBar'),
+    resumeFileName: document.getElementById('resumeFileName'),
+    btnDownloadPDF: document.getElementById('btnDownloadPDF'),
     pollingStatusLabel: document.getElementById('pollingStatusLabel'),
     btnTogglePolling: document.getElementById('btnTogglePolling'),
 
@@ -265,6 +268,19 @@
       dom.resumeSummaryText.textContent = state.user.summary;
     } else {
       dom.resumeSummaryText.textContent = 'Резюме еще не проанализировано. Загрузите файл резюме в Telegram бота (@SobolnJobBot).';
+    }
+
+    // Render PDF resume bar
+    if (dom.resumeFileStatusBar) {
+      const hasPDF = state.user.pdf_file_path || (state.user.file_name && state.user.file_name.toLowerCase().endsWith('.pdf'));
+      if (hasPDF) {
+        dom.resumeFileStatusBar.style.display = 'flex';
+        dom.resumeFileName.textContent = state.user.file_name || 'Резюме.pdf';
+        const pdfUrl = `${state.serverUrl.replace(/\/+$/, '')}/api/me/resume/pdf?token=${encodeURIComponent(state.token)}`;
+        dom.btnDownloadPDF.href = pdfUrl;
+      } else {
+        dom.resumeFileStatusBar.style.display = 'none';
+      }
     }
 
     // Polling status

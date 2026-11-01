@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -361,40 +362,62 @@ func (b *Bot) cmdWeb(msg *tgbotapi.Message) {
 	}
 
 	webURL := b.cfg.WebAppURL
-	if webURL == "" {
-		webURL = "https://sobolnikita.github.io/JobParser"
+	if webURL == "" || strings.Contains(webURL, "your-username") || strings.Contains(webURL, "soboln.github.io") {
+		webURL = "https://sobolnikita.github.io/JobParser/"
+	}
+	if !strings.HasSuffix(webURL, "/") {
+		webURL += "/"
 	}
 
 	serverBase := fmt.Sprintf("http://157.151.254.33:%d", b.cfg.APIPort)
 	directLink := fmt.Sprintf("%s?token=%s&server=%s", webURL, token, serverBase)
+	serverDirectLink := fmt.Sprintf("%s/?token=%s", serverBase, token)
 
-	msgText := fmt.Sprintf(`🌐 <b>Веб-интерфейс вакансий</b>
+	msgText := fmt.Sprintf(`🌐 <b>Веб-интерфейс вакансий JobHunter</b>
 
 Просматривайте вакансии в удобном минималистичном интерфейсе в стиле Vercel, управляйте избранным и создавайте сопроводительные письма.
 
 🔑 <b>Ваш персональный токен:</b>
 <code>%s</code>
 
-🔗 <b>Прямой переход без ввода токена:</b>
-%s
+🔗 <b>Ссылки для входа в 1 клик:</b>
+• <b>GitHub Pages:</b> <a href="%s">%s</a>
+• <b>Прямой сервер:</b> <a href="%s">%s</a>
 
-<i>Токен привязан к вашему Telegram ID (%d). Сохраняйте его в тайне.</i>`, token, directLink, chatID)
+<i>Токен привязан к вашему Telegram ID (%d). Сохраняйте его в тайне.</i>`, token, directLink, directLink, serverDirectLink, serverDirectLink, chatID)
 
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonURL("🚀 Открыть веб-интерфейс", directLink),
+			tgbotapi.NewInlineKeyboardButtonURL("🚀 Открыть веб-панель (GitHub)", directLink),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL("🖥 Открыть напрямую с сервера", serverDirectLink),
 		),
 	)
 	b.sendHTMLWithKeyboard(chatID, msgText, kb)
 }
 
 func (b *Bot) cmdResume(msg *tgbotapi.Message) {
-	r, err := b.storage.GetResume(msg.Chat.ID)
+	chatID := msg.Chat.ID
+	r, err := b.storage.GetResume(chatID)
 	if err != nil || r == nil || len(r.RawText) == 0 {
-		b.sendHTMLWithReply(msg.Chat.ID, "📄 <b>Резюме еще не загружено!</b>\n\nПришлите файл резюме (PDF/TXT) или отправьте текст резюме прямо в чат.", MainMenuKeyboard())
+		b.sendHTMLWithReply(chatID, "📄 <b>Резюме еще не загружено!</b>\n\nПришлите файл резюме (PDF/TXT) или отправьте текст резюме прямо в чат.", MainMenuKeyboard())
 		return
 	}
-	b.sendHTMLWithReply(msg.Chat.ID, FormatResumeMessage(r), MainMenuKeyboard())
+	b.sendHTMLWithReply(chatID, FormatResumeMessage(r), MainMenuKeyboard())
+
+	// Send original PDF document if available
+	if r.PDFFileID != "" {
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileID(r.PDFFileID))
+		doc.Caption = fmt.Sprintf("📄 Ваш сохраненный PDF: %s", r.FileName)
+		_, _ = b.api.Send(doc)
+	} else if r.PDFFilePath != "" {
+		if _, statErr := os.Stat(r.PDFFilePath); statErr == nil {
+			doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(r.PDFFilePath))
+			doc.Caption = fmt.Sprintf("📄 Ваш сохраненный PDF: %s", r.FileName)
+			_, _ = b.api.Send(doc)
+		}
+	}
 }
 
 func (b *Bot) cmdEditMenu(msg *tgbotapi.Message) {
@@ -468,7 +491,7 @@ func (b *Bot) cmdReanalyze(msg *tgbotapi.Message) {
 	}
 
 	b.sendHTML(chatID, "🔄 <b>Повторно анализирую ваше резюме через Gemini ИИ...</b>")
-	b.saveAndAnalyzeResume(chatID, r.RawText, r.FileName)
+	b.saveAndAnalyzeResume(chatID, r.RawText, r.FileName, r.PDFFileID, r.PDFFilePath)
 }
 
 func (b *Bot) cmdFavorites(msg *tgbotapi.Message) {
@@ -874,7 +897,19 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) {
 	}
 
 	var plainText string
+	var pdfPath string
+	var pdfFileID string
+
 	if isPDF {
+		_ = os.MkdirAll("./data/resumes", 0755)
+		pdfPath = fmt.Sprintf("./data/resumes/user_%d.pdf", chatID)
+		if writeErr := os.WriteFile(pdfPath, fileBytes, 0644); writeErr != nil {
+			log.Printf("[Bot] Failed to save local PDF file: %v", writeErr)
+		} else {
+			log.Printf("[Bot] Saved PDF resume to %s", pdfPath)
+		}
+		pdfFileID = doc.FileID
+
 		extracted, err := resume.ExtractTextFromPDF(fileBytes)
 		if err != nil {
 			b.sendHTML(chatID, fmt.Sprintf("❌ Не удалось извлечь текст из PDF: %v\nУбедитесь, что это текстовый PDF, а не скан/картинка.", err))
@@ -886,14 +921,14 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) {
 	}
 
 	b.sendHTML(chatID, fmt.Sprintf("📄 Извлечено %d символов текста. Запускаю глубокий анализ стека и уровня...", len([]rune(plainText))))
-	b.saveAndAnalyzeResume(chatID, plainText, doc.FileName)
+	b.saveAndAnalyzeResume(chatID, plainText, doc.FileName, pdfFileID, pdfPath)
 }
 
 func (b *Bot) processPlainTextResume(chatID int64, text string) {
-	b.saveAndAnalyzeResume(chatID, text, "Прямой ввод")
+	b.saveAndAnalyzeResume(chatID, text, "Прямой ввод", "", "")
 }
 
-func (b *Bot) saveAndAnalyzeResume(chatID int64, text, filename string) {
+func (b *Bot) saveAndAnalyzeResume(chatID int64, text, filename, pdfFileID, pdfPath string) {
 	b.sendHTML(chatID, "🧠 <i>Анализирую ваш стек, опыт и грейд с помощью Gemini ИИ...</i>")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -907,6 +942,19 @@ func (b *Bot) saveAndAnalyzeResume(chatID int64, text, filename string) {
 
 	parsedResume.UserID = chatID
 	parsedResume.FileName = filename
+	if pdfFileID != "" {
+		parsedResume.PDFFileID = pdfFileID
+		parsedResume.PDFFilePath = pdfPath
+	} else {
+		// Retain existing PDF file if user is updating text via chat
+		if existing, _ := b.storage.GetResume(chatID); existing != nil {
+			parsedResume.PDFFileID = existing.PDFFileID
+			parsedResume.PDFFilePath = existing.PDFFilePath
+			if parsedResume.FileName == "Прямой ввод" && existing.FileName != "" {
+				parsedResume.FileName = existing.FileName
+			}
+		}
+	}
 
 	if err := b.storage.SaveResume(parsedResume); err != nil {
 		b.sendHTML(chatID, fmt.Sprintf("❌ Ошибка сохранения резюме: %v", err))
@@ -914,6 +962,9 @@ func (b *Bot) saveAndAnalyzeResume(chatID int64, text, filename string) {
 	}
 
 	successMsg := fmt.Sprintf("✅ <b>Резюме успешно сохранено и проанализировано!</b>\n\n%s", FormatResumeMessage(parsedResume))
+	if parsedResume.PDFFileID != "" || parsedResume.PDFFilePath != "" {
+		successMsg += "\n\n📎 <i>PDF-оригинал сохранен на сервере и будет автоматически прикрепляться к вашим откликам на вакансии.</i>"
+	}
 	b.sendHTMLWithReply(chatID, successMsg, MainMenuKeyboard())
 }
 
@@ -1003,7 +1054,7 @@ func (b *Bot) handleReanalyzeCallback(cq *tgbotapi.CallbackQuery, chatID int64) 
 		b.sendHTML(chatID, "📄 Резюме не найдено.")
 		return
 	}
-	b.saveAndAnalyzeResume(chatID, r.RawText, r.FileName)
+	b.saveAndAnalyzeResume(chatID, r.RawText, r.FileName, r.PDFFileID, r.PDFFilePath)
 }
 
 func (b *Bot) handleCreateCoverLetter(cq *tgbotapi.CallbackQuery, chatID int64, vacID string, forceRegen bool) {
@@ -1053,7 +1104,7 @@ func (b *Bot) handleCreateCoverLetter(cq *tgbotapi.CallbackQuery, chatID int64, 
 }
 
 func (b *Bot) handleApply(cq *tgbotapi.CallbackQuery, chatID int64, vacID string) {
-	b.answerCallback(cq.ID, "Отправляю отклик через Chrome...")
+	b.answerCallback(cq.ID, "Подготавливаю пакет отклика...")
 
 	vac, err := b.storage.GetUserVacancy(chatID, vacID)
 	if err != nil || vac == nil {
@@ -1080,24 +1131,82 @@ func (b *Bot) handleApply(cq *tgbotapi.CallbackQuery, chatID int64, vacID string
 
 	escapedTitle := html.EscapeString(strings.ToValidUTF8(vac.Title, ""))
 	escapedComp := html.EscapeString(strings.ToValidUTF8(vac.Company, ""))
-	b.sendHTML(chatID, fmt.Sprintf("🚀 <b>Отправка отклика на вакансию:</b>\n%s (%s)\n<i>Подключаюсь к браузеру Chrome...</i>", escapedTitle, escapedComp))
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		applyRes, err := b.chrome.ApplyToVacancy(ctx, vac, letter)
-		cancel()
+	replyToMsgID := 0
+	if cq.Message != nil {
+		replyToMsgID = cq.Message.MessageID
+	}
 
-		if err != nil {
-			b.sendHTML(chatID, fmt.Sprintf("❌ <b>Не удалось отправить отклик автоматически:</b>\n%v\n\nВы можете откликнуться вручную по ссылке:\n%s", err, html.EscapeString(vac.URL)))
-			return
+	// 1. Send attached PDF resume file directly to user
+	hasPDF := false
+	if r.PDFFileID != "" {
+		docMsg := tgbotapi.NewDocument(chatID, tgbotapi.FileID(r.PDFFileID))
+		docMsg.Caption = fmt.Sprintf("📄 Ваше резюме в PDF: %s\nДля отклика на: %s (%s)", r.FileName, escapedTitle, escapedComp)
+		if replyToMsgID != 0 {
+			docMsg.ReplyToMessageID = replyToMsgID
 		}
+		if _, sendErr := b.api.Send(docMsg); sendErr == nil {
+			hasPDF = true
+		}
+	} else if r.PDFFilePath != "" {
+		if _, statErr := os.Stat(r.PDFFilePath); statErr == nil {
+			docMsg := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(r.PDFFilePath))
+			docMsg.Caption = fmt.Sprintf("📄 Ваше резюме в PDF: %s\nДля отклика на: %s (%s)", r.FileName, escapedTitle, escapedComp)
+			if replyToMsgID != 0 {
+				docMsg.ReplyToMessageID = replyToMsgID
+			}
+			if _, sendErr := b.api.Send(docMsg); sendErr == nil {
+				hasPDF = true
+			}
+		}
+	}
 
-		_ = b.storage.UpdateUserVacancyStatus(chatID, vacID, models.StatusApplied)
+	// 2. Mark vacancy status as Applied
+	_ = b.storage.UpdateUserVacancyStatus(chatID, vacID, models.StatusApplied)
 
-		resultMsg := fmt.Sprintf("✅ <b>Результат отклика:</b>\n%s\n\n💼 <b>Вакансия:</b> <a href=\"%s\">%s</a>",
-			html.EscapeString(applyRes.Message), html.EscapeString(vac.URL), escapedTitle)
-		b.sendHTML(chatID, resultMsg)
-	}()
+	// 3. Prepare response with cover letter & direct application action
+	var sb strings.Builder
+	sb.WriteString("🚀 <b>Пакет для отклика подготовлен!</b>\n\n")
+	sb.WriteString(fmt.Sprintf("💼 <b>Вакансия:</b> <a href=\"%s\">%s</a> (%s)\n", html.EscapeString(vac.URL), escapedTitle, escapedComp))
+
+	if hasPDF {
+		sb.WriteString("📎 <b>Файл PDF:</b> прикреплен выше 👆 — перешлите его работодателю в 1 клик.\n\n")
+	} else {
+		sb.WriteString("💡 <i>Совет: отправьте боту PDF-файл резюме, чтобы он автоматически прикреплял оригинальный PDF к каждому отклику.</i>\n\n")
+	}
+
+	sb.WriteString("📝 <b>Сопроводительное письмо (тапните для копирования):</b>\n")
+	sb.WriteString(fmt.Sprintf("<code>%s</code>\n\n", html.EscapeString(letter)))
+
+	// Direct action buttons
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if vac.URL != "" {
+		btnText := "🔗 Открыть вакансию для отклика"
+		if vac.Source == "telegram" || strings.Contains(vac.URL, "t.me/") {
+			btnText = "💬 Написать рекрутеру в Telegram"
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL(btnText, vac.URL),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("⭐ В избранное", fmt.Sprintf("fav:%s", vacID)),
+	))
+	applyKB := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	b.sendHTMLWithKeyboardAndReplyTo(chatID, sb.String(), applyKB, replyToMsgID)
+
+	// 4. For HH.ru / Habr, also attempt autonomous Chrome apply in background
+	if vac.Source == "hh" || vac.Source == "habr" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			applyRes, err := b.chrome.ApplyToVacancy(ctx, vac, letter, r.PDFFilePath)
+			if err == nil && applyRes != nil && applyRes.Success {
+				b.sendHTML(chatID, fmt.Sprintf("🤖 <b>Chrome успешно отправил отклик на %s!</b>\n%s", strings.ToUpper(vac.Source), html.EscapeString(applyRes.Message)))
+			}
+		}()
+	}
 }
 
 func (b *Bot) handleFavorite(cq *tgbotapi.CallbackQuery, chatID int64, vacID string) {

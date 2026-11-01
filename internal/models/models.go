@@ -46,7 +46,9 @@ type Resume struct {
 	Skills       []string  `json:"skills"`
 	Seniority    string    `json:"seniority"` // Junior, Middle, Senior, Lead
 	DesiredRole  string    `json:"desired_role"`
-	TargetStack  string    `json:"target_stack"` // e.g. "Golang", "Python", "Frontend", etc.
+	TargetStack      string    `json:"target_stack"` // e.g. "Golang", "Python", "Frontend", etc.
+	PDFFileID        string    `json:"pdf_file_id,omitempty"`
+	PDFFilePath      string    `json:"pdf_file_path,omitempty"`
 	AuthToken        string    `json:"auth_token,omitempty"`
 	IsAuthorized     bool      `json:"is_authorized"`
 	IsPollingEnabled bool      `json:"is_polling_enabled"`
