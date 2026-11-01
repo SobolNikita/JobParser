@@ -674,12 +674,21 @@ html.light .icon-moon { display: block; }
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+}
+
+.badge-grade:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
 }
 
 .grade-junior { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
 .grade-middle { color: #facc15; border-color: rgba(250, 204, 21, 0.4); }
 .grade-senior { color: #f87171; border-color: rgba(248, 113, 113, 0.4); }
 .grade-lead   { color: #c084fc; border-color: rgba(192, 132, 252, 0.4); }
+.grade-architect { color: #818cf8; border-color: rgba(129, 140, 248, 0.4); }
 
 .badge-source {
   font-size: 11px;

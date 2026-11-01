@@ -24,6 +24,7 @@
     selectedGrade: '',
     selectedSource: '',
     minMatch: 0,
+    sortBy: 'match_desc',
     favorites: [],
     activeModalVacancy: null,
   };
@@ -56,6 +57,7 @@
     gradePills: document.getElementById('gradePills'),
     sourceSelect: document.getElementById('sourceSelect'),
     minMatchSelect: document.getElementById('minMatchSelect'),
+    sortSelect: document.getElementById('sortSelect'),
     vacanciesGrid: document.getElementById('vacanciesGrid'),
     vacanciesLoading: document.getElementById('vacanciesLoading'),
     vacanciesEmpty: document.getElementById('vacanciesEmpty'),
@@ -357,6 +359,7 @@
     if (state.selectedGrade) params.set('grade', state.selectedGrade);
     if (state.selectedSource) params.set('source', state.selectedSource);
     if (state.minMatch > 0) params.set('min_match', state.minMatch);
+    if (state.sortBy) params.set('sort', state.sortBy);
 
     try {
       const data = await apiRequest(`/api/vacancies?${params.toString()}`);
@@ -400,7 +403,13 @@
   function createVacancyCardHTML(v) {
     const isFav = v.status === 'favorite';
     const matchClass = v.match_pct >= 75 ? 'match-high' : (v.match_pct >= 50 ? 'match-mid' : 'match-low');
-    const gradeClass = `grade-${(v.expected_grade || 'Junior').toLowerCase()}`;
+    const gLower = (v.expected_grade || 'Junior').toLowerCase();
+    let gradeClass = 'grade-middle';
+    if (gLower.includes('junior')) gradeClass = 'grade-junior';
+    else if (gLower.includes('senior')) gradeClass = 'grade-senior';
+    else if (gLower.includes('lead')) gradeClass = 'grade-lead';
+    else if (gLower.includes('architect')) gradeClass = 'grade-architect';
+    else if (gLower.includes('middle')) gradeClass = 'grade-middle';
 
     const analysisSnippet = v.match_analysis
       ? `<div class="card-analysis">${escapeHTML(v.match_analysis)}</div>`
@@ -719,6 +728,27 @@
       loadVacancies();
     });
 
+    // Grade badge click inside card
+    dom.vacanciesGrid.addEventListener('click', (e) => {
+      const badge = e.target.closest('.badge-grade');
+      if (!badge) return;
+      const text = badge.textContent.trim();
+      let targetGrade = '';
+      if (text.includes('Junior')) targetGrade = 'Junior';
+      else if (text.includes('Senior')) targetGrade = 'Senior';
+      else if (text.includes('Lead') || text.includes('Architect')) targetGrade = 'Lead';
+      else if (text.includes('Middle')) targetGrade = 'Middle';
+
+      if (targetGrade) {
+        dom.gradePills.querySelectorAll('.pill').forEach(p => {
+          p.classList.toggle('active', p.dataset.grade === targetGrade);
+        });
+        state.selectedGrade = targetGrade;
+        state.vacanciesPage = 1;
+        loadVacancies();
+      }
+    });
+
     // Dropdowns
     dom.sourceSelect.addEventListener('change', () => {
       state.selectedSource = dom.sourceSelect.value;
@@ -731,6 +761,14 @@
       state.vacanciesPage = 1;
       loadVacancies();
     });
+
+    if (dom.sortSelect) {
+      dom.sortSelect.addEventListener('change', () => {
+        state.sortBy = dom.sortSelect.value;
+        state.vacanciesPage = 1;
+        loadVacancies();
+      });
+    }
 
     // Pagination
     dom.btnPrevPage.addEventListener('click', () => {
