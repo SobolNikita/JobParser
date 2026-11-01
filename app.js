@@ -7,7 +7,9 @@
   'use strict';
 
   // --- State Configuration ---
-  const DEFAULT_SERVER = 'http://157.151.254.33:8080';
+  const DEFAULT_SERVER = (window.location.origin && !window.location.origin.includes('github.io') && !window.location.origin.includes('file://')) 
+    ? window.location.origin 
+    : 'http://157.151.254.33:8080';
 
   const state = {
     serverUrl: localStorage.getItem('jobhunter_server') || DEFAULT_SERVER,
@@ -203,7 +205,37 @@
   }
 
   // --- Connectivity & Health ---
+  function showMixedContentNotice() {
+    let banner = document.getElementById('mixedContentNotice');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'mixedContentNotice';
+      banner.style.cssText = 'background: rgba(234, 179, 8, 0.15); border: 1px solid rgba(234, 179, 8, 0.4); color: #facc15; padding: 12px 16px; margin: 12px 20px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px;';
+      const tokenQuery = state.token ? `?token=${encodeURIComponent(state.token)}` : '';
+      const serverHref = `http://157.151.254.33:8080/${tokenQuery}`;
+      banner.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 18px;">⚠️</span>
+          <span><b>Mixed Content:</b> Браузер блокирует незащищенные HTTP-запросы с HTTPS GitHub Pages. Для 100% стабильной работы откройте панель напрямую: <a href="${serverHref}" style="color: #fff; text-decoration: underline; font-weight: 600;">http://157.151.254.33:8080</a></span>
+        </div>
+        <a href="${serverHref}" class="btn btn-secondary btn-sm" style="flex-shrink: 0; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: #fff;">Открыть на сервере 🚀</a>
+      `;
+      const main = document.querySelector('main');
+      if (main && main.parentNode) {
+        main.parentNode.insertBefore(banner, main);
+      }
+    }
+  }
+
   async function checkHealth() {
+    const isMixedContent = window.location.protocol === 'https:' && state.serverUrl.startsWith('http://');
+    if (isMixedContent) {
+      dom.serverStatusBadge.classList.add('offline');
+      dom.serverStatusText.textContent = 'Mixed Content';
+      showMixedContentNotice();
+      return false;
+    }
+
     try {
       const data = await fetch(`${state.serverUrl.replace(/\/+$/, '')}/health`, { signal: AbortSignal.timeout(5000) });
       if (data.ok) {
