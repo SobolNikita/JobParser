@@ -26,17 +26,16 @@ type GeminiClient struct {
 func NormalizeModel(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	switch {
-	case strings.Contains(name, "3.8") || strings.Contains(name, "3.5") || strings.Contains(name, "3-flash"):
-		// Chat UI internal name mapped to latest high-speed Gemini Flash model
-		return "gemini-2.0-flash"
-	case strings.Contains(name, "2.0"):
-		return "gemini-2.0-flash"
-	case strings.Contains(name, "1.5-pro") || strings.Contains(name, "pro"):
-		return "gemini-1.5-pro"
-	case strings.Contains(name, "1.5") || strings.Contains(name, "flash"):
-		return "gemini-1.5-flash"
+	case strings.Contains(name, "3.8") || strings.Contains(name, "3.5"):
+		return "gemini-3.8-flash"
+	case strings.Contains(name, "lite"):
+		return "gemini-flash-lite-latest"
+	case strings.Contains(name, "pro"):
+		return "gemini-pro-latest"
+	case strings.Contains(name, "flash") || strings.Contains(name, "2.0") || strings.Contains(name, "2.5"):
+		return "gemini-flash-latest"
 	case name == "":
-		return "gemini-2.0-flash"
+		return "gemini-flash-latest"
 	default:
 		return name
 	}
@@ -155,7 +154,7 @@ func (c *GeminiClient) callWithModel(ctx context.Context, modelName, prompt stri
 func (c *GeminiClient) callAPI(ctx context.Context, prompt string, jsonOutput bool, temp float64) (string, error) {
 	// Candidate models to try in sequence
 	modelsToTry := []string{c.model}
-	fallbacks := []string{"gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
+	fallbacks := []string{"gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"}
 	for _, fb := range fallbacks {
 		if fb != c.model {
 			modelsToTry = append(modelsToTry, fb)
