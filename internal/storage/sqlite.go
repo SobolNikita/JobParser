@@ -30,6 +30,7 @@ func NewStorage(dbPath string) (*Storage, error) {
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
+	_ = s.CleanInvalidVacancies()
 
 	return s, nil
 }
@@ -917,6 +918,51 @@ func (s *Storage) GetChannels() ([]string, error) {
 		}
 	}
 	return chs, nil
+}
+
+// CleanInvalidVacancies removes category links and non-stack vacancies from DB
+func (s *Storage) CleanInvalidVacancies() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec(`DELETE FROM user_vacancies WHERE vacancy_id IN (
+		SELECT id FROM vacancies WHERE 
+			url LIKE '%/vacancies/web-design%' OR
+			url LIKE '%/vacancies/design%' OR
+			url LIKE '%/vacancies/finance%' OR
+			url LIKE '%/vacancies/marketing%' OR
+			url LIKE '%/vacancies/accounting%' OR
+			url LIKE '%/vacancies/management%' OR
+			url LIKE '%/vacancies/sales%' OR
+			url LIKE '%/vacancies/hr%' OR
+			title LIKE '%дизайн%' OR
+			title LIKE '%web-дизайн%' OR
+			title LIKE '%бухгалтер%' OR
+			title LIKE '%экономист%' OR
+			title LIKE '%маркетолог%' OR
+			title LIKE '%юрист%' OR
+			title LIKE '%продаж%'
+	)`)
+
+	_, err := s.db.Exec(`DELETE FROM vacancies WHERE 
+		url LIKE '%/vacancies/web-design%' OR
+		url LIKE '%/vacancies/design%' OR
+		url LIKE '%/vacancies/finance%' OR
+		url LIKE '%/vacancies/marketing%' OR
+		url LIKE '%/vacancies/accounting%' OR
+		url LIKE '%/vacancies/management%' OR
+		url LIKE '%/vacancies/sales%' OR
+		url LIKE '%/vacancies/hr%' OR
+		title LIKE '%дизайн%' OR
+		title LIKE '%web-дизайн%' OR
+		title LIKE '%бухгалтер%' OR
+		title LIKE '%экономист%' OR
+		title LIKE '%маркетолог%' OR
+		title LIKE '%юрист%' OR
+		title LIKE '%продаж%'`)
+
+	_, _ = s.db.Exec("VACUUM")
+	return err
 }
 
 // ClearVacancies removes all saved vacancies and user matches for fresh start

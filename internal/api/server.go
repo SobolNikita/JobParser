@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -51,6 +53,7 @@ func NewServer(
 
 	// Public endpoints
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/api/test-scrapers", s.handleTestScrapers)
 	mux.HandleFunc("/api/auth/verify", s.handleAuthVerify)
 
 	// Protected endpoints (Token Auth)
@@ -643,4 +646,67 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"applied":  stats[string(models.StatusApplied)],
 		"rejected": stats[string(models.StatusRejected)],
 	})
+}
+
+func (s *Server) handleTestScrapers(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		query = "golang"
+	}
+
+	result := make(map[string]interface{})
+	c := &http.Client{Timeout: 5 * time.Second}
+
+	// 1. Test HH RSS
+	rssURL := "https://hh.ru/search/vacancy/rss?text=" + url.QueryEscape(query) + "&schedule=remote&enable_snippets=true"
+	req, _ := http.NewRequest("GET", rssURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	if resp, err := c.Do(req); err == nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		snippet := string(body)
+		if len(snippet) > 250 {
+			snippet = snippet[:250]
+		}
+		result["hh_rss_status"] = resp.StatusCode
+		result["hh_rss_snippet"] = snippet
+	} else {
+		result["hh_rss_error"] = err.Error()
+	}
+
+	// 2. Test Rabota.by RSS
+	byURL := "https://rabota.by/search/vacancy/rss?text=" + url.QueryEscape(query) + "&enable_snippets=true"
+	byReq, _ := http.NewRequest("GET", byURL, nil)
+	byReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	if resp, err := c.Do(byReq); err == nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		snippet := string(body)
+		if len(snippet) > 250 {
+			snippet = snippet[:250]
+		}
+		result["rabota_by_rss_status"] = resp.StatusCode
+		result["rabota_by_rss_snippet"] = snippet
+	} else {
+		result["rabota_by_rss_error"] = err.Error()
+	}
+
+	// 3. Test HH API
+	apiURL := "https://api.hh.ru/vacancies?text=" + url.QueryEscape(query) + "&per_page=5"
+	apiReq, _ := http.NewRequest("GET", apiURL, nil)
+	apiReq.Header.Set("User-Agent", "JobParserBot/2.0 (sobolnikita@github.com)")
+	if resp, err := c.Do(apiReq); err == nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		snippet := string(body)
+		if len(snippet) > 250 {
+			snippet = snippet[:250]
+		}
+		result["hh_api_status"] = resp.StatusCode
+		result["hh_api_snippet"] = snippet
+	} else {
+		result["hh_api_error"] = err.Error()
+	}
+
+	s.jsonResponse(w, http.StatusOK, result)
 }
