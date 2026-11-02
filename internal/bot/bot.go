@@ -169,6 +169,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			b.cmdEdit(msg)
 		case "reanalyze", "analyze":
 			b.cmdReanalyze(msg)
+		case "reset", "clear", "cleardb":
+			b.cmdClearDB(msg)
+			return
 		case "next":
 			b.sendNextVacancy(chatID, "")
 			return
@@ -629,6 +632,16 @@ func (b *Bot) cmdStats(msg *tgbotapi.Message) {
 	b.sendHTMLWithReply(msg.Chat.ID, text, MainMenuKeyboard())
 }
 
+func (b *Bot) cmdClearDB(msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+	err := b.storage.ClearVacancies(chatID)
+	if err != nil {
+		b.sendHTML(chatID, fmt.Sprintf("❌ Ошибка очистки базы: %v", err))
+		return
+	}
+	b.sendHTMLWithReply(chatID, "🧹 <b>База вакансий полностью очищена!</b>\n\nВсе старые карточки, нерелевантные позиции (бухгалтеры, экономисты и т.д.) и прошлые отклики удалены.\nВаше резюме и настройки сохранены.\n\nНажмите <b>«🔍 Поиск вакансий»</b>, чтобы запустить чистый поиск по вашему стеку с нуля!", MainMenuKeyboard())
+}
+
 func (b *Bot) cmdSearch(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 	r, err := b.storage.GetResume(chatID)
@@ -744,8 +757,8 @@ func (b *Bot) cmdSearch(msg *tgbotapi.Message) {
 		_, _ = b.api.Send(edit)
 	}
 
-	// 2. Scrape with search context (timeout 50s)
-	fetchCtx, fetchCancel := context.WithTimeout(searchCtx, 50*time.Second)
+	// 2. Scrape with search context (generous timeout 65s)
+	fetchCtx, fetchCancel := context.WithTimeout(searchCtx, 65*time.Second)
 	newlyFound, err := b.orchestrator.FetchAllForQueryWithProgress(fetchCtx, targetStack, func(u scrapers.ScraperProgressUpdate) {
 		statusMu.Lock()
 		if st, ok := statuses[u.SourceName]; ok {

@@ -116,6 +116,10 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 			return
 		}
 
+		if !models.IsRelevantToStack(query, title, "", "") {
+			return
+		}
+
 		company := strings.TrimSpace(card.Find(".job-company-name-text, .job-company-name, [class*='company']").Text())
 		if company == "" {
 			company = "HireHi Partner"
@@ -163,6 +167,9 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 			if err := json.Unmarshal([]byte(text), &ldData); err == nil && len(ldData.ItemList) > 0 {
 				for _, item := range ldData.ItemList {
 					if item.URL == "" || item.Name == "" || seenURLs[item.URL] {
+						continue
+					}
+					if !models.IsRelevantToStack(query, item.Name, "", "") {
 						continue
 					}
 					seenURLs[item.URL] = true
@@ -255,7 +262,7 @@ func (s *HireHiScraper) fetchBrowser(ctx context.Context, targetURL, query strin
 				}
 			}
 			title = strings.TrimSpace(title)
-			if title == "" {
+			if title == "" || !models.IsRelevantToStack(query, title, "", "") {
 				continue
 			}
 
@@ -326,6 +333,9 @@ func extractHireHiJSON(data interface{}, query string, seenURLs map[string]bool,
 		}
 
 		if title != "" && link != "" {
+			if !models.IsRelevantToStack(query, title, "", "") {
+				return
+			}
 			if !strings.HasPrefix(link, "http") {
 				link = "https://hirehi.ru" + link
 			}

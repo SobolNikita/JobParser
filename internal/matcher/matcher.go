@@ -211,6 +211,20 @@ func (m *Matcher) EvaluateVacancy(ctx context.Context, userID int64, v *models.V
 		_ = m.storage.SaveResume(r)
 	}
 
+	targetStack := r.TargetStack
+	if targetStack == "" {
+		targetStack = "Golang"
+	}
+	if !models.IsRelevantToStack(targetStack, v.Title, v.Description, v.Requirements) {
+		v.MatchPct = 0
+		v.MatchAnalysis = "Вакансия не соответствует целевому стеку."
+		_ = m.storage.SaveUserVacancyState(userID, v.ID, 0, v.MatchAnalysis, models.StatusRejected)
+		return &ProcessResult{
+			Vacancy:     v,
+			MatchResult: &models.MatchResult{Percentage: 0, Summary: v.MatchAnalysis},
+		}, nil
+	}
+
 	// 1. Calculate intelligent rule-based match first
 	ruleMatch := CalculateRuleBasedMatch(r, v)
 	matchRes := ruleMatch

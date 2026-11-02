@@ -918,3 +918,14 @@ func (s *Storage) GetChannels() ([]string, error) {
 	}
 	return chs, nil
 }
+
+// ClearVacancies removes all saved vacancies and user matches for fresh start
+func (s *Storage) ClearVacancies(userID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, _ = s.db.Exec("DELETE FROM user_vacancies")
+	_, err := s.db.Exec("DELETE FROM vacancies")
+	_, _ = s.db.Exec("VACUUM")
+	return err
+}

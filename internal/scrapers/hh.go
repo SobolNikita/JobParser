@@ -33,7 +33,7 @@ func NewHHScraper(chrome *browser.ChromeManager, siteName, startURL string) *HHS
 		chrome:   chrome,
 		siteName: siteName,
 		startURL: startURL,
-		client:   &http.Client{Timeout: 15 * time.Second},
+		client:   &http.Client{Timeout: 4 * time.Second},
 	}
 }
 
@@ -195,6 +195,10 @@ func (s *HHScraper) fetchRSS(ctx context.Context, query string) ([]*models.Vacan
 			hash := sha256.Sum256([]byte(link))
 			vID := fmt.Sprintf("%s_%x", strings.ReplaceAll(s.siteName, ".", "_"), hash[:6])
 
+			if !models.IsRelevantToStack(query, title, descText, "") {
+				continue
+			}
+
 			vacancies = append(vacancies, &models.Vacancy{
 				ID:           vID,
 				Source:       s.siteName,
@@ -322,6 +326,10 @@ func (s *HHScraper) fetchAPI(ctx context.Context, query string) ([]*models.Vacan
 			continue
 		}
 
+		if !models.IsRelevantToStack(query, cleanTitle, cleanReq, cleanResp) {
+			continue
+		}
+
 		salaryStr := ""
 		if item.Salary != nil {
 			if item.Salary.From != nil && item.Salary.To != nil {
@@ -401,17 +409,16 @@ func (s *HHScraper) fetchBrowser(ctx context.Context, query string) ([]*models.V
 			return err
 		}
 
-		// Wait for initial page load
-		_ = page.Timeout(12 * time.Second).WaitLoad()
+		// Fast wait for initial page load
+		_ = page.Timeout(5 * time.Second).WaitLoad()
 
-		// Dismiss region popup / cookie banner if present
-		if confirmBtn, err := page.Element("[data-qa='region-clarification-confirm'], button[data-qa*='confirm']"); err == nil && confirmBtn != nil {
+		// Dismiss region popup if present
+		if confirmBtn, err := page.Timeout(1 * time.Second).Element("[data-qa='region-clarification-confirm'], button[data-qa*='confirm']"); err == nil && confirmBtn != nil {
 			_ = confirmBtn.Click(proto.InputMouseButtonLeft, 1)
-			time.Sleep(500 * time.Millisecond)
 		}
 
-		// Wait up to 20 seconds for vacancy elements to appear (allows DDoS-Guard redirect / React hydration to complete)
-		_, _ = page.Timeout(20 * time.Second).Element("a[data-qa*='vacancy-title'], [data-qa*='serp-item__title'], a[href*='/vacancy/'], [data-qa*='vacancy-serp__vacancy']")
+		// Fast wait for vacancy links
+		_, _ = page.Timeout(5 * time.Second).Element("a[href*='/vacancy/'], [data-qa*='vacancy-title']")
 
 		// Scroll to trigger lazy-loaded cards
 		_ = page.Mouse.Scroll(0, 600, 3)
@@ -507,7 +514,7 @@ func (s *HHScraper) fetchBrowser(ctx context.Context, query string) ([]*models.V
 			reqs = strings.ToValidUTF8(strings.TrimSpace(reqs), "")
 			resp = strings.ToValidUTF8(strings.TrimSpace(resp), "")
 
-			if title == "" {
+			if title == "" || !models.IsRelevantToStack(query, title, reqs, resp) {
 				continue
 			}
 
