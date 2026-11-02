@@ -25,6 +25,7 @@ type ChromeManager struct {
 	browser    *rod.Browser
 	launcher   *launcher.Launcher
 	mu         sync.Mutex
+	pageMu     sync.Mutex
 	stopCh     chan struct{}
 }
 
@@ -78,7 +79,11 @@ func (m *ChromeManager) Start() error {
 		Headless(m.headless).
 		NoSandbox(true).
 		Set("disable-dev-shm-usage").
-		Set("disable-gpu")
+		Set("disable-gpu").
+		Set("disable-blink-features", "AutomationControlled").
+		Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36").
+		Set("window-size", "1920,1080").
+		Set("lang", "ru-RU,ru,en-US,en")
 
 	if found {
 		log.Printf("[Chrome] Found system Chrome at: %s", chromeBin)
@@ -159,6 +164,9 @@ func (m *ChromeManager) ensureConnected() error {
 
 // WithPage executes callback in a temporary tab and closes ONLY that tab
 func (m *ChromeManager) WithPage(ctx context.Context, fn func(page *rod.Page) error) error {
+	m.pageMu.Lock()
+	defer m.pageMu.Unlock()
+
 	if err := m.ensureConnected(); err != nil {
 		return err
 	}
@@ -178,6 +186,17 @@ func (m *ChromeManager) WithPage(ctx context.Context, fn func(page *rod.Page) er
 	defer func() {
 		_ = page.Close()
 	}()
+
+	_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
+		UserAgent:      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+		AcceptLanguage: "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+	})
+	_, _ = page.EvalOnNewDocument(`
+		Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+		window.chrome = { runtime: {} };
+		Object.defineProperty(navigator, 'languages', {get: () => ['ru-RU', 'ru', 'en-US', 'en']});
+		Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+	`)
 
 	pageWithCtx := page.Context(ctx)
 	return fn(pageWithCtx)

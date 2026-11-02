@@ -45,36 +45,64 @@ func (s *HHScraper) FetchJobsForQuery(ctx context.Context, query string) ([]*mod
 
 	targetURL := s.startURL
 	if strings.Contains(s.startURL, "text=") {
-		targetURL = fmt.Sprintf("https://%s/search/vacancy?text=%s&order_by=publication_time", s.siteName, url.QueryEscape(query))
+		targetURL = fmt.Sprintf("https://%s/search/vacancy?text=%s&order_by=publication_time&items_on_page=50", s.siteName, url.QueryEscape(query))
 	}
 
 	var vacancies []*models.Vacancy
 
-	scraperCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	scraperCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
 	err := s.chrome.WithPage(scraperCtx, func(page *rod.Page) error {
-		_ = page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
-			UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-		})
-
 		if err := page.Navigate(targetURL); err != nil {
 			return err
 		}
 
-		_ = page.Timeout(10 * time.Second).WaitLoad()
+		_ = page.Timeout(12 * time.Second).WaitLoad()
 		time.Sleep(2 * time.Second)
 
-		cards, err := page.Elements("[data-qa='vacancy-serp__vacancy'], [data-qa='vacancy-serp__vacancy_paginated'], .serp-item, [class*='vacancy-card']")
-		if err != nil || len(cards) == 0 {
-			log.Printf("[%s] No vacancy card elements found on page", s.siteName)
-			return nil
+		// Dismiss region popup / cookie banner if present
+		if confirmBtn, err := page.Element("[data-qa='region-clarification-confirm'], button[data-qa*='confirm']"); err == nil && confirmBtn != nil {
+			_ = confirmBtn.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(500 * time.Millisecond)
 		}
 
+		// Scroll to trigger lazy-loaded cards
+		_ = page.Mouse.Scroll(0, 600, 3)
+		time.Sleep(1 * time.Second)
+
+		// Broad selector matching both legacy and 2024-2026 HeadHunter/Rabota.by redesigned cards
+		cards, err := page.Elements(`
+			[data-qa*='vacancy-serp__vacancy'],
+			.serp-item,
+			[class*='serp-item'],
+			[class*='vacancy-card'],
+			div[data-qa*='vacancy'],
+			[data-qa='vacancy-serp__vacancy_standard'],
+			[data-qa='vacancy-serp__vacancy_premium']
+		`)
+		if err != nil || len(cards) == 0 {
+			// Fallback: search for direct vacancy links on page
+			cards, err = page.Elements("a[data-qa*='vacancy-title'], a[data-qa*='serp-item__title'], a[href*='/vacancy/']")
+			if err != nil || len(cards) == 0 {
+				log.Printf("[%s] No vacancy card elements found on page", s.siteName)
+				return nil
+			}
+		}
+
+		seenURLs := make(map[string]bool)
+
 		for _, card := range cards {
-			titleEl, err := card.Element("[data-qa='serp-item__title'], a[href*='/vacancy/'], [data-qa='vacancy-serp__vacancy-title']")
-			if err != nil || titleEl == nil {
-				continue
+			// Check if the element itself is the vacancy link
+			var titleEl *rod.Element
+			tagName, _ := card.Property("tagName")
+			if strings.EqualFold(tagName.String(), "a") {
+				titleEl = card
+			} else {
+				titleEl, err = card.Element("a[data-qa*='vacancy-title'], a[data-qa*='serp-item__title'], a[href*='/vacancy/']")
+				if err != nil || titleEl == nil {
+					continue
+				}
 			}
 
 			title, _ := titleEl.Text()
@@ -96,28 +124,33 @@ func (s *HHScraper) FetchJobsForQuery(ctx context.Context, query string) ([]*mod
 				fullURL = fullURL[:idx]
 			}
 
+			if seenURLs[fullURL] {
+				continue
+			}
+			seenURLs[fullURL] = true
+
 			var company string
-			if compEl, err := card.Element("[data-qa='vacancy-serp__vacancy-employer'], [data-qa='vacancy-serp__vacancy-company']"); err == nil && compEl != nil {
+			if compEl, err := card.Element("[data-qa*='employer'], [data-qa*='company'], [class*='employer']"); err == nil && compEl != nil {
 				company, _ = compEl.Text()
 			}
 
 			var salary string
-			if salEl, err := card.Element("[data-qa='vacancy-serp__vacancy-compensation'], [data-qa='vacancy-compensation']"); err == nil && salEl != nil {
+			if salEl, err := card.Element("[data-qa*='compensation'], [data-qa*='salary'], [class*='compensation']"); err == nil && salEl != nil {
 				salary, _ = salEl.Text()
 			}
 
 			var reqs string
-			if reqEl, err := card.Element("[data-qa='vacancy-serp__vacancy_snippet_requirement']"); err == nil && reqEl != nil {
+			if reqEl, err := card.Element("[data-qa*='snippet_requirement'], [data-qa*='requirement']"); err == nil && reqEl != nil {
 				reqs, _ = reqEl.Text()
 			}
 
 			var resp string
-			if respEl, err := card.Element("[data-qa='vacancy-serp__vacancy_snippet_responsibility']"); err == nil && respEl != nil {
+			if respEl, err := card.Element("[data-qa*='snippet_responsibility'], [data-qa*='responsibility']"); err == nil && respEl != nil {
 				resp, _ = respEl.Text()
 			}
 
 			var location string
-			if locEl, err := card.Element("[data-qa='vacancy-serp__vacancy-address']"); err == nil && locEl != nil {
+			if locEl, err := card.Element("[data-qa*='address'], [class*='address']"); err == nil && locEl != nil {
 				location, _ = locEl.Text()
 			}
 
