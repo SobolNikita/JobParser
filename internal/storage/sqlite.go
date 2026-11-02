@@ -438,11 +438,21 @@ func (s *Storage) SaveUserVacancyState(userID int64, vacID string, matchPct int,
 		ON CONFLICT(user_id, vacancy_id) DO UPDATE SET
 			match_pct = excluded.match_pct,
 			match_analysis = excluded.match_analysis,
-			status = excluded.status,
+			status = CASE WHEN user_vacancies.status != 'new' THEN user_vacancies.status ELSE excluded.status END,
 			updated_at = excluded.updated_at;`
 
 	_, err := s.db.Exec(query, userID, vacID, matchPct, analysis, string(status), time.Now())
 	return err
+}
+
+// UserVacancyExists checks if user already has an entry for this vacancy
+func (s *Storage) UserVacancyExists(userID int64, vacID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM user_vacancies WHERE user_id = ? AND vacancy_id = ?", userID, vacID).Scan(&count)
+	return count > 0, err
 }
 
 // UpdateUserVacancyStatus updates only the status (favorite, rejected, applied, etc.)
@@ -737,6 +747,50 @@ func (s *Storage) GetUnviewedVacancies(userID int64, limit int) ([]*models.Vacan
 		list = append(list, &v)
 	}
 	return list, nil
+}
+
+// GetNextUnviewedVacancy returns the top unviewed vacancy for user (ordered by match_pct DESC)
+func (s *Storage) GetNextUnviewedVacancy(userID int64) (*models.Vacancy, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT v.id, v.source, v.external_id, v.title, v.company, v.salary, v.location, v.url, v.description, v.requirements, v.published_at, v.created_at,
+		COALESCE(uv.match_pct, 0), COALESCE(uv.match_analysis, ''), COALESCE(uv.status, 'new'), COALESCE(uv.cover_letter, ''), COALESCE(v.expected_grade, '')
+		FROM vacancies v
+		LEFT JOIN user_vacancies uv ON v.id = uv.vacancy_id AND uv.user_id = ?
+		WHERE uv.status IS NULL OR uv.status = 'new'
+		ORDER BY COALESCE(uv.match_pct, 0) DESC, v.created_at DESC
+		LIMIT 1;`
+
+	var v models.Vacancy
+	var statusStr string
+	err := s.db.QueryRow(query, userID).Scan(
+		&v.ID, &v.Source, &v.ExternalID, &v.Title, &v.Company, &v.Salary, &v.Location, &v.URL,
+		&v.Description, &v.Requirements, &v.PublishedAt, &v.CreatedAt,
+		&v.MatchPct, &v.MatchAnalysis, &statusStr, &v.CoverLetter, &v.ExpectedGrade,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if v.ExpectedGrade == "" {
+		v.ExpectedGrade = models.DetectGrade(v.Title, v.Requirements, v.Description)
+	}
+	v.Status = models.VacancyStatus(statusStr)
+	return &v, nil
+}
+
+// CountUnviewedVacancies returns total unviewed vacancies count for user
+func (s *Storage) CountUnviewedVacancies(userID int64) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT COUNT(*) FROM vacancies v
+		LEFT JOIN user_vacancies uv ON v.id = uv.vacancy_id AND uv.user_id = ?
+		WHERE uv.status IS NULL OR uv.status = 'new';`
+
+	var count int
+	err := s.db.QueryRow(query, userID).Scan(&count)
+	return count, err
 }
 
 // GetStats returns counts per status for user

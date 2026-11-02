@@ -43,21 +43,21 @@ func (s *HireHiScraper) FetchJobsForQuery(ctx context.Context, query string) ([]
 		query = "golang"
 	}
 
-	searchURL := fmt.Sprintf("https://hirehi.ru/vacancies/development?search=%s", url.QueryEscape(query))
-
-	// 1. Direct HTTP request with Goquery & JSON-LD parser (0.5s, no Chrome overhead)
-	vacancies, err := s.fetchHTTP(ctx, searchURL, query)
-	if err == nil && len(vacancies) > 0 {
-		log.Printf("[HireHi.ru] Successfully fetched %d vacancies via direct HTTP", len(vacancies))
-		return vacancies, nil
+	searchURLs := []string{
+		fmt.Sprintf("https://hirehi.ru/vacancies?search=%s", url.QueryEscape(query)),
+		fmt.Sprintf("https://hirehi.ru/vacancies/development?search=%s", url.QueryEscape(query)),
 	}
 
-	if err != nil {
-		log.Printf("[HireHi.ru] HTTP fetch returned %v, attempting headless Chrome fallback...", err)
+	for _, searchURL := range searchURLs {
+		vacancies, err := s.fetchHTTP(ctx, searchURL, query)
+		if err == nil && len(vacancies) > 0 {
+			log.Printf("[HireHi.ru] Successfully fetched %d vacancies via direct HTTP (%s)", len(vacancies), searchURL)
+			return vacancies, nil
+		}
 	}
 
-	// 2. Headless Chrome fallback
-	return s.fetchBrowser(ctx, searchURL, query)
+	// Headless Chrome fallback
+	return s.fetchBrowser(ctx, searchURLs[0], query)
 }
 
 func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) ([]*models.Vacancy, error) {
@@ -87,9 +87,12 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 	var vacancies []*models.Vacancy
 	seenURLs := make(map[string]bool)
 
-	// A. Parse .job-card elements
-	doc.Find(".job-card").Each(func(i int, card *goquery.Selection) {
+	// A. Parse job card elements
+	doc.Find(".job-card, [class*='job-card'], [class*='job_card'], [class*='VacancyCard'], a[href*='/vacancies/'], a[href*='/vacancy/'], a[href*='/development/']").Each(func(i int, card *goquery.Selection) {
 		href, _ := card.Attr("href")
+		if href == "" {
+			href, _ = card.Find("a").Attr("href")
+		}
 		if href == "" {
 			return
 		}
@@ -100,23 +103,30 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 		if seenURLs[fullURL] {
 			return
 		}
-		seenURLs[fullURL] = true
 
-		title := strings.TrimSpace(card.Find(".job-title").Text())
+		title := strings.TrimSpace(card.Find(".job-title, [class*='title']").Text())
 		if title == "" {
+			title = strings.TrimSpace(card.Text())
+			lines := strings.Split(title, "\n")
+			if len(lines) > 0 {
+				title = strings.TrimSpace(lines[0])
+			}
+		}
+		if title == "" || len(title) < 3 {
 			return
 		}
 
-		company := strings.TrimSpace(card.Find(".job-company-name-text").Text())
+		company := strings.TrimSpace(card.Find(".job-company-name-text, .job-company-name, [class*='company']").Text())
 		if company == "" {
-			company = strings.TrimSpace(card.Find(".job-company-name").Text())
+			company = "HireHi Partner"
 		}
 
-		salary := strings.TrimSpace(card.Find(".job-salary").Text())
+		salary := strings.TrimSpace(card.Find(".job-salary, [class*='salary']").Text())
 		if strings.Contains(strings.ToLower(salary), "не указана") {
 			salary = ""
 		}
 
+		seenURLs[fullURL] = true
 		hash := sha256.Sum256([]byte(fullURL))
 		vID := fmt.Sprintf("hirehi_%x", hash[:6])
 
@@ -177,6 +187,17 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 				}
 			}
 		})
+	}
+
+	// C. If still empty, parse Next.js __NEXT_DATA__
+	if len(vacancies) == 0 {
+		nextDataScript := doc.Find("script#__NEXT_DATA__")
+		if nextDataScript.Length() > 0 {
+			var nextData map[string]interface{}
+			if err := json.Unmarshal([]byte(nextDataScript.Text()), &nextData); err == nil {
+				extractHireHiJSON(nextData, query, seenURLs, &vacancies)
+			}
+		}
 	}
 
 	return vacancies, nil
@@ -272,4 +293,72 @@ func (s *HireHiScraper) fetchBrowser(ctx context.Context, targetURL, query strin
 	})
 
 	return vacancies, err
+}
+
+func extractHireHiJSON(data interface{}, query string, seenURLs map[string]bool, vacancies *[]*models.Vacancy) {
+	switch val := data.(type) {
+	case map[string]interface{}:
+		var title, comp, sal, link string
+		if t, ok := val["title"].(string); ok {
+			title = t
+		} else if n, ok := val["name"].(string); ok {
+			title = n
+		}
+
+		if u, ok := val["url"].(string); ok {
+			link = u
+		} else if s, ok := val["slug"].(string); ok {
+			link = "/vacancies/" + s
+		} else if id, ok := val["id"].(string); ok {
+			link = "/vacancies/" + id
+		}
+
+		if c, ok := val["company"].(string); ok {
+			comp = c
+		} else if cm, ok := val["company"].(map[string]interface{}); ok {
+			if cn, ok := cm["name"].(string); ok {
+				comp = cn
+			}
+		}
+
+		if s, ok := val["salary"].(string); ok {
+			sal = s
+		}
+
+		if title != "" && link != "" {
+			if !strings.HasPrefix(link, "http") {
+				link = "https://hirehi.ru" + link
+			}
+			if !seenURLs[link] {
+				seenURLs[link] = true
+				hash := sha256.Sum256([]byte(link))
+				vID := fmt.Sprintf("hirehi_%x", hash[:6])
+				if comp == "" {
+					comp = "HireHi Partner"
+				}
+				*vacancies = append(*vacancies, &models.Vacancy{
+					ID:           vID,
+					Source:       "HireHi.ru",
+					ExternalID:   link,
+					Title:        title,
+					Company:      comp,
+					Salary:       sal,
+					Location:     "Удаленно / РФ",
+					URL:          link,
+					Requirements: query,
+					Description:  title,
+					PublishedAt:  time.Now(),
+					CreatedAt:    time.Now(),
+				})
+			}
+		}
+
+		for _, item := range val {
+			extractHireHiJSON(item, query, seenURLs, vacancies)
+		}
+	case []interface{}:
+		for _, item := range val {
+			extractHireHiJSON(item, query, seenURLs, vacancies)
+		}
+	}
 }

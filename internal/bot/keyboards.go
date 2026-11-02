@@ -11,43 +11,43 @@ func MainMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	kb := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("🔍 Поиск вакансий"),
-			tgbotapi.NewKeyboardButton("🎯 Выбрать стек"),
+			tgbotapi.NewKeyboardButton("▶️ Следующая вакансия"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("🎯 Выбрать стек"),
 			tgbotapi.NewKeyboardButton("⭐ Избранное"),
-			tgbotapi.NewKeyboardButton("🌐 Веб-интерфейс"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("📄 Мое резюме"),
-			tgbotapi.NewKeyboardButton("✏️ Изменить резюме"),
+			tgbotapi.NewKeyboardButton("🌐 Веб-интерфейс"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("🔄 Фоновый поиск"),
+			tgbotapi.NewKeyboardButton("🔔 Фоновый поиск 24/7"),
 			tgbotapi.NewKeyboardButton("📊 Статистика"),
 		),
 	)
 	kb.ResizeKeyboard = true
-	kb.InputFieldPlaceholder = "Выберите действие или введите команду..."
+	kb.InputFieldPlaceholder = "Выберите действие или команду..."
 	return kb
 }
 
-// VacancyActionsKeyboard returns the 4 requested actions for each vacancy
+// VacancyActionsKeyboard returns the interactive decision buttons for one-by-one queue
 func VacancyActionsKeyboard(vacID string, hasCoverLetter bool) tgbotapi.InlineKeyboardMarkup {
-	clButtonText := "📝 Создать сопроводительное"
+	clButtonText := "📝 Сопроводительное"
 	if hasCoverLetter {
-		clButtonText = "📝 Посмотреть сопроводительное"
+		clButtonText = "📝 Посмотреть письмо"
 	}
 
 	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(clButtonText, fmt.Sprintf("cl:%s", vacID)),
-		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🚀 Откликнуться", fmt.Sprintf("apply:%s", vacID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⭐ В избранное", fmt.Sprintf("fav:%s", vacID)),
-			tgbotapi.NewInlineKeyboardButtonData("❌ Пропустить", fmt.Sprintf("skip:%s", vacID)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отклонить", fmt.Sprintf("skip:%s", vacID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(clButtonText, fmt.Sprintf("cl:%s", vacID)),
 		),
 	)
 }

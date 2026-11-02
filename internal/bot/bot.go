@@ -36,6 +36,8 @@ type Bot struct {
 	stopCh           chan struct{}
 	activeSearches   map[int64]context.CancelFunc
 	activeSearchesMu sync.Mutex
+	lastSentVacID    map[int64]string
+	lastSentVacMu    sync.Mutex
 }
 
 func NewBot(
@@ -67,6 +69,7 @@ func NewBot(
 		matcher:        m,
 		stopCh:         make(chan struct{}),
 		activeSearches: make(map[int64]context.CancelFunc),
+		lastSentVacID:  make(map[int64]string),
 	}, nil
 }
 
@@ -166,6 +169,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			b.cmdEdit(msg)
 		case "reanalyze", "analyze":
 			b.cmdReanalyze(msg)
+		case "next":
+			b.sendNextVacancy(chatID, "")
+			return
 		case "search", "parse":
 			b.cmdSearch(msg)
 		case "poll", "monitoring":
@@ -195,13 +201,16 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case "🔍 Поиск вакансий":
 		b.cmdSearch(msg)
 		return
+	case "▶️ Следующая вакансия", "/next":
+		b.sendNextVacancy(chatID, "")
+		return
 	case "🎯 Выбрать стек":
 		b.cmdStack(msg)
 		return
 	case "🌐 Веб-интерфейс":
 		b.cmdWeb(msg)
 		return
-	case "🔄 Фоновый поиск":
+	case "🔔 Фоновый поиск 24/7", "🔄 Фоновый поиск":
 		b.cmdPoll(chatID, "")
 		return
 	case "📄 Мое резюме":
@@ -313,14 +322,16 @@ func (b *Bot) cmdPoll(chatID int64, args string) {
 
 	stack := b.storage.GetUserStack(chatID)
 
-	msgText := fmt.Sprintf(`🔄 <b>Постоянный фоновый поиск вакансий</b>
+	msgText := fmt.Sprintf(`🔔 <b>Фоновый поиск 24/7 (Авто-мониторинг)</b>
 
 Статус: %s
 Целевой стек: <b>%s</b>
 
-Когда фоновый поиск активен, бот непрерывно отслеживает новые вакансии со всех площадок и присылает подходящие под ваш уровень предложения.
+💡 <b>Разделение функций поиска:</b>
+• <b>🔍 Поиск вакансий (ручной):</b> запускает полный поиск прямо сейчас и выдает вакансии по одной в очереди для быстрого принятия решений.
+• <b>🔔 Фоновый поиск 24/7:</b> непрерывно отслеживает появление новых вакансий со всех площадок (HH.ru, Rabota.by, Хабр Карьера, HireHi, Telegram) и сразу присылает их вам в чат.
 
-Вы можете включить или остановить постоянный мониторинг кнопками ниже:`, statusText, html.EscapeString(stack))
+Управление фоновым мониторингом:`, statusText, html.EscapeString(stack))
 
 	b.sendHTMLWithKeyboard(chatID, msgText, PollControlKeyboard(isPolling))
 }
@@ -828,38 +839,54 @@ func (b *Bot) cmdSearch(msg *tgbotapi.Message) {
 		return evaluated[i].vac.MatchPct > evaluated[j].vac.MatchPct
 	})
 
-	limit := 12
-	if len(evaluated) < limit {
-		limit = len(evaluated)
-	}
-
 	// Final progress update
 	if statusMsgID != 0 {
-		finalSummary := fmt.Sprintf("✅ <b>Поиск завершен!</b> Подобрано %d лучших вакансий для уровня %s.\nРезультаты отправлены ниже 👇", limit, html.EscapeString(r.Seniority))
+		finalSummary := fmt.Sprintf("✅ <b>Поиск завершен!</b> Подобрано %d подходящих вакансий для уровня %s.\nПоказываю первую вакансию для принятия решения 👇", len(evaluated), html.EscapeString(r.Seniority))
 		edit := tgbotapi.NewEditMessageText(chatID, statusMsgID, finalSummary)
 		edit.ParseMode = tgbotapi.ModeHTML
 		_, _ = b.api.Send(edit)
 	}
 
-	for i := 0; i < limit; i++ {
-		if searchCtx.Err() != nil {
-			return
-		}
-		item := evaluated[i]
-		v := item.vac
-		procRes := item.procRes
+	// Show first vacancy from queue
+	b.sendNextVacancy(chatID, "")
+}
 
-		if procRes.AutoApplied {
-			msgText := fmt.Sprintf("🤖 <b>АВТООТКЛИК ОТПРАВЛЕН!</b> 🚀\n\n%s\n\n📝 <b>Сопроводительное:</b>\n<code>%s</code>",
-				FormatVacancyMessage(v), html.EscapeString(v.CoverLetter))
-			b.sendHTML(chatID, msgText)
-		} else {
-			cardText := FormatVacancyMessage(v)
-			kb := VacancyActionsKeyboard(v.ID, false)
-			b.sendHTMLWithKeyboard(chatID, cardText, kb)
-		}
-		time.Sleep(350 * time.Millisecond) // avoid telegram rate limits
+func (b *Bot) sendNextVacancy(chatID int64, optionalPrefix string) {
+	b.lastSentVacMu.Lock()
+	lastID := b.lastSentVacID[chatID]
+	b.lastSentVacMu.Unlock()
+
+	v, err := b.storage.GetNextUnviewedVacancy(chatID)
+	// If user clicked "Next" button and we get the same vacancy again, automatically skip it and advance
+	if err == nil && v != nil && lastID == v.ID && optionalPrefix == "" {
+		_ = b.storage.UpdateUserVacancyStatus(chatID, v.ID, models.StatusRejected)
+		v, err = b.storage.GetNextUnviewedVacancy(chatID)
 	}
+
+	if err != nil || v == nil {
+		allDoneText := "🎉 <b>Вы просмотрели все существующие вакансии!</b>\n\n" +
+			"Все найденные предложения уже обработаны вами (отправлен отклик, отклонены или сохранены в избранное).\n\n" +
+			"🔔 <i>Включите функцию <b>«🔔 Фоновый поиск 24/7»</b> (кнопка в меню ниже), и бот будет в реальном времени отслеживать новые вакансии со всех площадок и мгновенно присылать их вам в чат сразу при выходе!</i>"
+		if optionalPrefix != "" {
+			allDoneText = optionalPrefix + allDoneText
+		}
+		b.sendHTMLWithReply(chatID, allDoneText, MainMenuKeyboard())
+		return
+	}
+
+	b.lastSentVacMu.Lock()
+	b.lastSentVacID[chatID] = v.ID
+	b.lastSentVacMu.Unlock()
+
+	totalLeft, _ := b.storage.CountUnviewedVacancies(chatID)
+	counterStr := ""
+	if totalLeft > 0 {
+		counterStr = fmt.Sprintf("📋 <i>[В очереди на рассмотрение: %d]</i>\n\n", totalLeft)
+	}
+
+	cardText := fmt.Sprintf("%s%s%s", optionalPrefix, counterStr, FormatVacancyMessage(v))
+	kb := VacancyActionsKeyboard(v.ID, v.CoverLetter != "")
+	b.sendHTMLWithKeyboard(chatID, cardText, kb)
 }
 
 func (b *Bot) handleDocument(msg *tgbotapi.Message) {
@@ -1196,6 +1223,13 @@ func (b *Bot) handleApply(cq *tgbotapi.CallbackQuery, chatID int64, vacID string
 
 	b.sendHTMLWithKeyboardAndReplyTo(chatID, sb.String(), applyKB, replyToMsgID)
 
+	if cq.Message != nil {
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, cq.Message.MessageID)
+		_, _ = b.api.Send(deleteMsg)
+	}
+
+	b.sendNextVacancy(chatID, "🚀 <i>Пакет для отклика подготовлен выше 👆. Следующая вакансия:</i>\n\n")
+
 	// 4. For HH.ru / Habr, also attempt autonomous Chrome apply in background
 	if vac.Source == "hh" || vac.Source == "habr" {
 		go func() {
@@ -1213,12 +1247,12 @@ func (b *Bot) handleFavorite(cq *tgbotapi.CallbackQuery, chatID int64, vacID str
 	_ = b.storage.UpdateUserVacancyStatus(chatID, vacID, models.StatusFavorite)
 	b.answerCallback(cq.ID, "⭐ Вакансия добавлена в избранное!")
 
-	editMsg := tgbotapi.NewEditMessageReplyMarkup(
-		chatID,
-		cq.Message.MessageID,
-		VacancyActionsKeyboard(vacID, true),
-	)
-	_, _ = b.api.Send(editMsg)
+	if cq.Message != nil {
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, cq.Message.MessageID)
+		_, _ = b.api.Send(deleteMsg)
+	}
+
+	b.sendNextVacancy(chatID, "⭐ <i>Вакансия сохранена в Избранное! Следующая:</i>\n\n")
 }
 
 func (b *Bot) handleUnfavorite(cq *tgbotapi.CallbackQuery, chatID int64, vacID string) {
@@ -1231,10 +1265,14 @@ func (b *Bot) handleUnfavorite(cq *tgbotapi.CallbackQuery, chatID int64, vacID s
 
 func (b *Bot) handleSkip(cq *tgbotapi.CallbackQuery, chatID int64, vacID string) {
 	_ = b.storage.UpdateUserVacancyStatus(chatID, vacID, models.StatusRejected)
-	b.answerCallback(cq.ID, "❌ Вакансия скрыта.")
+	b.answerCallback(cq.ID, "❌ Вакансия отклонена.")
 
-	deleteMsg := tgbotapi.NewDeleteMessage(chatID, cq.Message.MessageID)
-	_, _ = b.api.Send(deleteMsg)
+	if cq.Message != nil {
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, cq.Message.MessageID)
+		_, _ = b.api.Send(deleteMsg)
+	}
+
+	b.sendNextVacancy(chatID, "❌ <i>Вакансия отклонена. Следующая:</i>\n\n")
 }
 
 // Background poller
@@ -1291,6 +1329,12 @@ func (b *Bot) runScheduledSweep() {
 
 	for _, userID := range users {
 		for _, v := range allVacancies {
+			// Skip if already seen/evaluated by user
+			exists, _ := b.storage.UserVacancyExists(userID, v.ID)
+			if exists {
+				continue
+			}
+
 			evalCtx, evalCancel := context.WithTimeout(context.Background(), 20*time.Second)
 			procRes, err := b.matcher.EvaluateVacancy(evalCtx, userID, v)
 			evalCancel()
@@ -1300,11 +1344,11 @@ func (b *Bot) runScheduledSweep() {
 			}
 
 			if procRes.AutoApplied {
-				msgText := fmt.Sprintf("🤖 <b>АВТООТКЛИК ОТПРАВЛЕН!</b> 🚀\n\n%s\n\n📝 <b>Сопроводительное:</b>\n<code>%s</code>",
+				msgText := fmt.Sprintf("🤖 <b>ФОНОВЫЙ ПОИСК 24/7: АВТООТКЛИК!</b> 🚀\n\n%s\n\n📝 <b>Сопроводительное:</b>\n<code>%s</code>",
 					FormatVacancyMessage(v), html.EscapeString(v.CoverLetter))
 				b.sendHTML(userID, msgText)
 			} else if v.MatchPct >= 60 {
-				cardText := FormatVacancyMessage(v)
+				cardText := fmt.Sprintf("🔔 <b>НОВАЯ ВАКАНСИЯ (Фоновый поиск 24/7)</b> 🆕\n\n%s", FormatVacancyMessage(v))
 				kb := VacancyActionsKeyboard(v.ID, false)
 				b.sendHTMLWithKeyboard(userID, cardText, kb)
 			}

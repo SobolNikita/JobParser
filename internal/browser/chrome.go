@@ -27,6 +27,7 @@ type ChromeManager struct {
 	mu         sync.Mutex
 	pageMu     sync.Mutex
 	stopCh     chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewChromeManager(wsURL, profileDir string, headless bool) *ChromeManager {
@@ -133,7 +134,9 @@ func (m *ChromeManager) keepAlive() {
 
 // Stop cleanly terminates browser and launcher
 func (m *ChromeManager) Stop() {
-	close(m.stopCh)
+	m.stopOnce.Do(func() {
+		close(m.stopCh)
+	})
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
