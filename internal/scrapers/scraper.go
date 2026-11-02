@@ -40,8 +40,8 @@ func NewOrchestrator(chrome *browser.ChromeManager, st *storage.Storage, customC
 	// 3. HireHi
 	sources = append(sources, NewHireHiScraper(chrome))
 
-	// 4. HH.ru
-	sources = append(sources, NewHHScraper(chrome, "hh.ru", "https://hh.ru/search/vacancy?text=golang&order_by=publication_time"))
+	// 4. HH.ru (Remote vacancies across all regions)
+	sources = append(sources, NewHHScraper(chrome, "hh.ru", "https://hh.ru/search/vacancy?text=golang&schedule=remote&order_by=publication_time"))
 
 	// 5. Rabota.by
 	sources = append(sources, NewHHScraper(chrome, "rabota.by", "https://rabota.by/search/vacancy?text=golang&order_by=publication_time"))

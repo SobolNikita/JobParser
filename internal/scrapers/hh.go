@@ -64,66 +64,110 @@ func (s *HHScraper) FetchJobsForQuery(ctx context.Context, query string) ([]*mod
 
 func (s *HHScraper) fetchAPI(ctx context.Context, query string) ([]*models.Vacancy, error) {
 	apiHost := "api.hh.ru"
-	var apiURL string
+	var urlsToFetch []string
+
 	if strings.Contains(s.siteName, "rabota.by") {
-		// Belarus area=16
-		apiURL = fmt.Sprintf("https://%s/vacancies?text=%s&area=16&per_page=30", apiHost, url.QueryEscape(query))
+		// All Belarus vacancies (Area 16)
+		urlsToFetch = append(urlsToFetch, fmt.Sprintf("https://%s/vacancies?text=%s&area=16&per_page=50", apiHost, url.QueryEscape(query)))
 	} else {
-		apiURL = fmt.Sprintf("https://%s/vacancies?text=%s&order_by=publication_time&per_page=30", apiHost, url.QueryEscape(query))
+		// 1. Remote vacancies across all countries and cities
+		urlsToFetch = append(urlsToFetch, fmt.Sprintf("https://%s/vacancies?text=%s&schedule=remote&order_by=publication_time&per_page=50", apiHost, url.QueryEscape(query)))
+		// 2. Fresh general vacancies matching query
+		urlsToFetch = append(urlsToFetch, fmt.Sprintf("https://%s/vacancies?text=%s&order_by=publication_time&per_page=30", apiHost, url.QueryEscape(query)))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	// HeadHunter API strictly requires User-Agent with app name and contact email/url
-	req.Header.Set("User-Agent", "JobParserBot/2.0 (sobolnikita@github.com)")
-	req.Header.Set("HH-User-Agent", "JobParserBot/2.0 (sobolnikita@github.com)")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	var res struct {
-		Items []struct {
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			AltURL   string `json:"alternate_url"`
-			Employer struct {
-				Name string `json:"name"`
-			} `json:"employer"`
-			Salary *struct {
-				From     *int   `json:"from"`
-				To       *int   `json:"to"`
-				Currency string `json:"currency"`
-			} `json:"salary"`
-			Snippet struct {
-				Requirement    string `json:"requirement"`
-				Responsibility string `json:"responsibility"`
-			} `json:"snippet"`
-			Area struct {
-				Name string `json:"name"`
-			} `json:"area"`
-		} `json:"items"`
+	type hhResponseItem struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		AltURL   string `json:"alternate_url"`
+		Employer struct {
+			Name string `json:"name"`
+		} `json:"employer"`
+		Salary *struct {
+			From     *int   `json:"from"`
+			To       *int   `json:"to"`
+			Currency string `json:"currency"`
+		} `json:"salary"`
+		Snippet struct {
+			Requirement    string `json:"requirement"`
+			Responsibility string `json:"responsibility"`
+		} `json:"snippet"`
+		Schedule *struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"schedule"`
+		Area struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"area"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, err
+	var allItems []hhResponseItem
+	seenItemIDs := make(map[string]bool)
+
+	for _, apiURL := range urlsToFetch {
+		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "JobParserBot/2.0 (sobolnikita@github.com)")
+		req.Header.Set("HH-User-Agent", "JobParserBot/2.0 (sobolnikita@github.com)")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var res struct {
+			Items []hhResponseItem `json:"items"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
+			for _, item := range res.Items {
+				if !seenItemIDs[item.ID] {
+					seenItemIDs[item.ID] = true
+					allItems = append(allItems, item)
+				}
+			}
+		}
+		resp.Body.Close()
+	}
+
+	if len(allItems) == 0 {
+		return nil, fmt.Errorf("no vacancies returned from HH API")
 	}
 
 	var vacancies []*models.Vacancy
-	for _, item := range res.Items {
+	for _, item := range allItems {
 		cleanTitle := strings.ReplaceAll(strings.ReplaceAll(item.Name, "<highlighttext>", ""), "</highlighttext>", "")
 		cleanReq := strings.ReplaceAll(strings.ReplaceAll(item.Snippet.Requirement, "<highlighttext>", ""), "</highlighttext>", "")
 		cleanResp := strings.ReplaceAll(strings.ReplaceAll(item.Snippet.Responsibility, "<highlighttext>", ""), "</highlighttext>", "")
+
+		isRemote := (item.Schedule != nil && item.Schedule.ID == "remote") ||
+			strings.Contains(strings.ToLower(cleanTitle), "удален") ||
+			strings.Contains(strings.ToLower(cleanReq), "удален") ||
+			strings.Contains(strings.ToLower(cleanResp), "удален")
+
+		isBelarus := strings.Contains(s.siteName, "rabota.by") ||
+			item.Area.ID == "16" ||
+			strings.Contains(strings.ToLower(item.Area.Name), "беларусь") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "минск") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "брест") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "гомель") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "гродно") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "витебск") ||
+			strings.Contains(strings.ToLower(item.Area.Name), "могилев")
+
+		// Filtering rule: keep all Belarus vacancies OR remote vacancies from any region
+		if !isBelarus && !isRemote {
+			continue
+		}
 
 		salaryStr := ""
 		if item.Salary != nil {
@@ -150,6 +194,15 @@ func (s *HHScraper) fetchAPI(ctx context.Context, query string) ([]*models.Vacan
 			link = strings.Replace(link, "hh.ru", "rabota.by", 1)
 		}
 
+		locationStr := item.Area.Name
+		if isRemote && !strings.Contains(strings.ToLower(locationStr), "удален") {
+			if locationStr != "" {
+				locationStr += " (Удаленно)"
+			} else {
+				locationStr = "Удаленно"
+			}
+		}
+
 		hash := sha256.Sum256([]byte(link))
 		vID := fmt.Sprintf("%s_%x", strings.ReplaceAll(s.siteName, ".", "_"), hash[:6])
 
@@ -160,7 +213,7 @@ func (s *HHScraper) fetchAPI(ctx context.Context, query string) ([]*models.Vacan
 			Title:        cleanTitle,
 			Company:      item.Employer.Name,
 			Salary:       salaryStr,
-			Location:     item.Area.Name,
+			Location:     locationStr,
 			URL:          link,
 			Requirements: cleanReq,
 			Description:  desc,
@@ -179,7 +232,11 @@ func (s *HHScraper) fetchBrowser(ctx context.Context, query string) ([]*models.V
 
 	targetURL := s.startURL
 	if strings.Contains(s.startURL, "text=") {
-		targetURL = fmt.Sprintf("https://%s/search/vacancy?text=%s&order_by=publication_time&items_on_page=50", s.siteName, url.QueryEscape(query))
+		if strings.Contains(s.siteName, "rabota.by") {
+			targetURL = fmt.Sprintf("https://rabota.by/search/vacancy?text=%s&order_by=publication_time&items_on_page=50", url.QueryEscape(query))
+		} else {
+			targetURL = fmt.Sprintf("https://hh.ru/search/vacancy?text=%s&schedule=remote&order_by=publication_time&items_on_page=50", url.QueryEscape(query))
+		}
 	}
 
 	var vacancies []*models.Vacancy
