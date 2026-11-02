@@ -167,9 +167,6 @@ func (m *ChromeManager) ensureConnected() error {
 
 // WithPage executes callback in a temporary tab and closes ONLY that tab
 func (m *ChromeManager) WithPage(ctx context.Context, fn func(page *rod.Page) error) error {
-	m.pageMu.Lock()
-	defer m.pageMu.Unlock()
-
 	if err := m.ensureConnected(); err != nil {
 		return err
 	}
@@ -182,7 +179,9 @@ func (m *ChromeManager) WithPage(ctx context.Context, fn func(page *rod.Page) er
 		return fmt.Errorf("chrome browser instance not available")
 	}
 
+	m.pageMu.Lock()
 	page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	m.pageMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("failed to create browser tab: %w", err)
 	}

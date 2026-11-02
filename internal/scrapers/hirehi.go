@@ -87,8 +87,8 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 	var vacancies []*models.Vacancy
 	seenURLs := make(map[string]bool)
 
-	// A. Parse job card elements
-	doc.Find(".job-card, [class*='job-card'], [class*='job_card'], [class*='VacancyCard'], a[href*='/vacancies/'], a[href*='/vacancy/'], a[href*='/development/']").Each(func(i int, card *goquery.Selection) {
+	// A. Parse job card elements (strictly cards, no category links!)
+	doc.Find(".job-card, [class*='job-card'], [class*='job_card'], [class*='VacancyCard']").Each(func(i int, card *goquery.Selection) {
 		href, _ := card.Attr("href")
 		if href == "" {
 			href, _ = card.Find("a").Attr("href")
@@ -100,7 +100,7 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 		if !strings.HasPrefix(fullURL, "http") {
 			fullURL = "https://hirehi.ru" + fullURL
 		}
-		if seenURLs[fullURL] {
+		if seenURLs[fullURL] || isHireHiCategoryURL(fullURL) {
 			return
 		}
 
@@ -113,6 +113,10 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 			}
 		}
 		if title == "" || len(title) < 3 {
+			return
+		}
+
+		if !models.IsRelevantToStack(query, title, "", "") {
 			return
 		}
 
@@ -163,6 +167,9 @@ func (s *HireHiScraper) fetchHTTP(ctx context.Context, targetURL, query string) 
 			if err := json.Unmarshal([]byte(text), &ldData); err == nil && len(ldData.ItemList) > 0 {
 				for _, item := range ldData.ItemList {
 					if item.URL == "" || item.Name == "" || seenURLs[item.URL] {
+						continue
+					}
+					if !models.IsRelevantToStack(query, item.Name, "", "") {
 						continue
 					}
 					seenURLs[item.URL] = true
@@ -220,7 +227,7 @@ func (s *HireHiScraper) fetchBrowser(ctx context.Context, targetURL, query strin
 		_ = page.Timeout(10 * time.Second).WaitLoad()
 		time.Sleep(2 * time.Second)
 
-		cards, err := page.Elements(".job-card, [class*='job-card'], a[href*='/development/']")
+		cards, err := page.Elements(".job-card, [class*='job-card'], [class*='VacancyCard']")
 		if err != nil || len(cards) == 0 {
 			log.Printf("[HireHi.ru] No job cards found on page")
 			return nil
@@ -238,7 +245,7 @@ func (s *HireHiScraper) fetchBrowser(ctx context.Context, targetURL, query strin
 				fullURL = "https://hirehi.ru" + fullURL
 			}
 
-			if seenURLs[fullURL] {
+			if seenURLs[fullURL] || isHireHiCategoryURL(fullURL) {
 				continue
 			}
 			seenURLs[fullURL] = true
@@ -255,7 +262,7 @@ func (s *HireHiScraper) fetchBrowser(ctx context.Context, targetURL, query strin
 				}
 			}
 			title = strings.TrimSpace(title)
-			if title == "" {
+			if title == "" || !models.IsRelevantToStack(query, title, "", "") {
 				continue
 			}
 
@@ -326,6 +333,9 @@ func extractHireHiJSON(data interface{}, query string, seenURLs map[string]bool,
 		}
 
 		if title != "" && link != "" {
+			if isHireHiCategoryURL(link) || !models.IsRelevantToStack(query, title, "", "") {
+				return
+			}
 			if !strings.HasPrefix(link, "http") {
 				link = "https://hirehi.ru" + link
 			}
@@ -361,4 +371,27 @@ func extractHireHiJSON(data interface{}, query string, seenURLs map[string]bool,
 			extractHireHiJSON(item, query, seenURLs, vacancies)
 		}
 	}
+}
+
+func isHireHiCategoryURL(rawURL string) bool {
+	rawURL = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rawURL), "/"))
+	if strings.HasSuffix(rawURL, "/vacancies") || strings.HasSuffix(rawURL, "/vacancies/development") {
+		return true
+	}
+	parts := strings.Split(rawURL, "/")
+	for i, p := range parts {
+		if p == "vacancies" && i == len(parts)-2 {
+			slug := parts[i+1]
+			categories := map[string]bool{
+				"web-design": true, "design": true, "development": true, "marketing": true,
+				"finance": true, "accounting": true, "legal": true, "hr": true,
+				"analytics": true, "qa": true, "devops": true, "sales": true,
+				"management": true, "product": true, "support": true, "mobile": true,
+			}
+			if categories[slug] {
+				return true
+			}
+		}
+	}
+	return false
 }
