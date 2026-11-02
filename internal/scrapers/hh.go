@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 
 	"jobparser/internal/browser"
 	"jobparser/internal/models"
+
+	"github.com/PuerkitoBio/goquery"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -47,8 +50,19 @@ func (s *HHScraper) FetchJobsForQuery(ctx context.Context, query string) ([]*mod
 		query = "golang"
 	}
 
-	// 1. Try public REST API first (fastest, lightweight)
-	vacancies, err := s.fetchAPI(ctx, query)
+	// 1. Try native RSS feeds first (instant 0.3s, bypasses DDoS-Guard and doesn't require OAuth)
+	vacancies, err := s.fetchRSS(ctx, query)
+	if err == nil && len(vacancies) > 0 {
+		log.Printf("[%s] Successfully fetched %d vacancies via native RSS feed", s.siteName, len(vacancies))
+		return vacancies, nil
+	}
+
+	if err != nil {
+		log.Printf("[%s] RSS fetch attempt returned: %v. Trying REST API...", s.siteName, err)
+	}
+
+	// 2. Try REST API
+	vacancies, err = s.fetchAPI(ctx, query)
 	if err == nil && len(vacancies) > 0 {
 		log.Printf("[%s] Successfully fetched %d vacancies via official API", s.siteName, len(vacancies))
 		return vacancies, nil
@@ -58,8 +72,147 @@ func (s *HHScraper) FetchJobsForQuery(ctx context.Context, query string) ([]*mod
 		log.Printf("[%s] API fetch attempt returned: %v. Running browser automation...", s.siteName, err)
 	}
 
-	// 2. Headless Chrome automation with wait-for-element and stealth
+	// 3. Headless Chrome automation fallback
 	return s.fetchBrowser(ctx, query)
+}
+
+func (s *HHScraper) fetchRSS(ctx context.Context, query string) ([]*models.Vacancy, error) {
+	var rssURLs []string
+	if strings.Contains(s.siteName, "rabota.by") {
+		rssURLs = append(rssURLs,
+			fmt.Sprintf("https://rabota.by/search/vacancy/rss?text=%s&enable_snippets=true", url.QueryEscape(query)),
+			fmt.Sprintf("https://rabota.by/search/vacancy/rss?text=%s&area=16&enable_snippets=true", url.QueryEscape(query)),
+		)
+	} else {
+		// Remote vacancies across all countries and cities
+		rssURLs = append(rssURLs,
+			fmt.Sprintf("https://hh.ru/search/vacancy/rss?text=%s&schedule=remote&enable_snippets=true", url.QueryEscape(query)),
+			fmt.Sprintf("https://hh.ru/search/vacancy/rss?text=%s&enable_snippets=true", url.QueryEscape(query)),
+		)
+	}
+
+	type hhRSSRoot struct {
+		XMLName xml.Name `xml:"rss"`
+		Channel struct {
+			Title string `xml:"title"`
+			Items []struct {
+				Title       string `xml:"title"`
+				Link        string `xml:"link"`
+				Description string `xml:"description"`
+				PubDate     string `xml:"pubDate"`
+				Author      string `xml:"author"`
+			} `xml:"item"`
+		} `xml:"channel"`
+	}
+
+	var vacancies []*models.Vacancy
+	seenURLs := make(map[string]bool)
+
+	for _, rssURL := range rssURLs {
+		req, err := http.NewRequestWithContext(ctx, "GET", rssURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var root hhRSSRoot
+		decodeErr := xml.NewDecoder(resp.Body).Decode(&root)
+		resp.Body.Close()
+		if decodeErr != nil {
+			log.Printf("[%s] RSS decode error for %s: %v", s.siteName, rssURL, decodeErr)
+			continue
+		}
+
+		for _, item := range root.Channel.Items {
+			link := item.Link
+			if idx := strings.Index(link, "?"); idx != -1 {
+				link = link[:idx]
+			}
+			if link == "" || seenURLs[link] {
+				continue
+			}
+
+			if strings.Contains(s.siteName, "rabota.by") && strings.Contains(link, "hh.ru") {
+				link = strings.Replace(link, "hh.ru", "rabota.by", 1)
+			}
+
+			title := strings.TrimSpace(item.Title)
+			salary := ""
+			if openIdx := strings.LastIndex(title, "("); openIdx != -1 && strings.HasSuffix(title, ")") {
+				bracketContent := title[openIdx+1 : len(title)-1]
+				if strings.Contains(bracketContent, "руб") || strings.Contains(bracketContent, "$") || strings.Contains(bracketContent, "€") || strings.Contains(bracketContent, "USD") || strings.Contains(bracketContent, "EUR") || strings.Contains(bracketContent, "от") || strings.Contains(bracketContent, "до") {
+					salary = bracketContent
+					title = strings.TrimSpace(title[:openIdx])
+				}
+			}
+
+			descDoc, _ := goquery.NewDocumentFromReader(strings.NewReader("<div>" + item.Description + "</div>"))
+			descText := item.Description
+			company := item.Author
+			if descDoc != nil {
+				descText = strings.TrimSpace(descDoc.Text())
+				descDoc.Find("p, div, span").Each(func(i int, sel *goquery.Selection) {
+					t := strings.TrimSpace(sel.Text())
+					if strings.HasPrefix(strings.ToLower(t), "компания:") || strings.HasPrefix(strings.ToLower(t), "работодатель:") {
+						parts := strings.SplitN(t, ":", 2)
+						if len(parts) == 2 && company == "" {
+							company = strings.TrimSpace(parts[1])
+						}
+					}
+				})
+			}
+
+			if company == "" {
+				company = "HeadHunter Partner"
+			}
+
+			location := "Удаленно / РФ и СНГ"
+			if strings.Contains(s.siteName, "rabota.by") {
+				location = "Беларусь / Минск"
+			}
+
+			isRemote := strings.Contains(rssURL, "schedule=remote") ||
+				strings.Contains(strings.ToLower(title), "удален") ||
+				strings.Contains(strings.ToLower(descText), "удален")
+
+			if isRemote && !strings.Contains(strings.ToLower(location), "удален") {
+				location += " (Удаленно)"
+			}
+
+			seenURLs[link] = true
+			hash := sha256.Sum256([]byte(link))
+			vID := fmt.Sprintf("%s_%x", strings.ReplaceAll(s.siteName, ".", "_"), hash[:6])
+
+			vacancies = append(vacancies, &models.Vacancy{
+				ID:           vID,
+				Source:       s.siteName,
+				ExternalID:   link,
+				Title:        title,
+				Company:      company,
+				Salary:       salary,
+				Location:     location,
+				URL:          link,
+				Requirements: query,
+				Description:  descText,
+				PublishedAt:  time.Now(),
+				CreatedAt:    time.Now(),
+			})
+		}
+	}
+
+	return vacancies, nil
 }
 
 func (s *HHScraper) fetchAPI(ctx context.Context, query string) ([]*models.Vacancy, error) {
@@ -240,7 +393,7 @@ func (s *HHScraper) fetchBrowser(ctx context.Context, query string) ([]*models.V
 	}
 
 	var vacancies []*models.Vacancy
-	scraperCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	scraperCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	err := s.chrome.WithPage(scraperCtx, func(page *rod.Page) error {
